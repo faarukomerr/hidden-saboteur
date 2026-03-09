@@ -10,7 +10,10 @@ export const initSocketServer = async (server: any) => {
             cors: {
                 origin: '*',
                 methods: ["GET", "POST"]
-            }
+            },
+            pingTimeout: 60000,
+            pingInterval: 25000,
+            transports: ['websocket', 'polling']
         });
 
         const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
