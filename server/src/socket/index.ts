@@ -53,14 +53,14 @@ export const initSocketServer = async (server: any) => {
                 try {
                     const roundData = await GameService.startRound(roomCode);
 
-                    // Announce roles privately
-                    io.to(roundData.roles.narrator).emit('role_assigned', { role: 'narrator', targetWord: roundData.targetWord });
+                    // Announce roles privately with the actual database Round ID
+                    io.to(roundData.roles.narrator).emit('role_assigned', { role: 'narrator', targetWord: roundData.targetWord, roundId: roundData.roundId });
                     if (roundData.roles.guesser) {
-                        io.to(roundData.roles.guesser).emit('role_assigned', { role: 'guesser' });
+                        io.to(roundData.roles.guesser).emit('role_assigned', { role: 'guesser', roundId: roundData.roundId });
                     }
 
                     roundData.roles.saboteurs.forEach((sabId: string) => {
-                        io.to(sabId).emit('role_assigned', { role: 'saboteur' });
+                        io.to(sabId).emit('role_assigned', { role: 'saboteur', roundId: roundData.roundId });
                     });
 
                     // Tell the room that the Sabotage phase has begun

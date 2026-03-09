@@ -32,6 +32,7 @@ export const Lobby = () => {
     // Roles assigned by server
     const [myRole, setMyRole] = useState<'narrator' | 'guesser' | 'saboteur' | null>(null);
     const [targetWord, setTargetWord] = useState<string | null>(null);
+    const [roundId, setRoundId] = useState<string>('1');
 
     useEffect(() => {
         if (!socket || !roomCode || !username) {
@@ -49,9 +50,10 @@ export const Lobby = () => {
             if (data.players) setPlayers(data.players);
         });
 
-        socket.on('role_assigned', (data: { role: any, targetWord?: string }) => {
+        socket.on('role_assigned', (data: { role: any, targetWord?: string, roundId?: string }) => {
             setMyRole(data.role);
             if (data.targetWord) setTargetWord(data.targetWord);
+            if (data.roundId) setRoundId(data.roundId);
         });
 
         socket.on('phase_changed', (data: { phase: typeof phase }) => {
@@ -76,7 +78,7 @@ export const Lobby = () => {
     if (phase === 'sabotage_input' && myRole === 'saboteur') {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen p-6">
-                <SabotageInputPhase roomCode={roomCode!} roundId="1" /> {/* Replace 1 with actual round from server in future */}
+                <SabotageInputPhase roomCode={roomCode!} roundId={roundId} />
             </div>
         )
     }
@@ -103,7 +105,7 @@ export const Lobby = () => {
         const handleYandi = () => {
             const word = prompt("What word did the Narrator say?"); // Basic MVP implementation, in full version use a visual input modal
             if (word) {
-                socket?.emit('trigger_sabotage', { roomCode, roundId: "1", word });
+                socket?.emit('trigger_sabotage', { roomCode, roundId: roundId, word });
             }
         };
 
