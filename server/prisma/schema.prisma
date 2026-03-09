@@ -1,0 +1,88 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  deviceId  String?  @unique
+  username  String
+  isPremium Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  hostedRooms Room[]   @relation("RoomHost")
+  players     Player[]
+}
+
+model Room {
+  id        String   @id @default(uuid())
+  roomCode  String   @unique
+  hostId    String
+  status    String   @default("waiting") // waiting, playing, ended
+  createdAt DateTime @default(now())
+
+  host    User     @relation("RoomHost", fields: [hostId], references: [id])
+  players Player[]
+  rounds  Round[]
+
+  @@index([roomCode])
+}
+
+model Player {
+  id       String   @id @default(uuid())
+  roomId   String
+  userId   String
+  score    Int      @default(0)
+  joinedAt DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  roles         Role[]
+  sabotageWords SabotageWord[]
+
+  @@unique([roomId, userId])
+}
+
+model Round {
+  id          String   @id @default(uuid())
+  roomId      String
+  roundNumber Int
+  targetWord  String
+  status      String   @default("sabotage_phase")
+  startedAt   DateTime @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  roles         Role[]
+  sabotageWords SabotageWord[]
+}
+
+model Role {
+  id       String @id @default(uuid())
+  roundId  String
+  playerId String
+  roleType String // narrator, guesser, saboteur
+
+  round  Round  @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([roundId, playerId])
+}
+
+model SabotageWord {
+  id          String  @id @default(uuid())
+  roundId     String
+  playerId    String?
+  word        String
+  isTriggered Boolean @default(false)
+
+  round  Round   @relation(fields: [roundId], references: [id], onDelete: Cascade)
+  player Player? @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
+  @@index([word])
+}

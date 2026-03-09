@@ -1,0 +1,12 @@
+node_modules
+dist
+.env
+.DS_Store
+dev.db
+*.db
+*.db-journal
+client/dist
+client/node_modules
+server/dist
+server/node_modules
+.vite
