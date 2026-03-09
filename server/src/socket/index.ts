@@ -55,7 +55,9 @@ export const initSocketServer = async (server: any) => {
 
                     // Announce roles privately
                     io.to(roundData.roles.narrator).emit('role_assigned', { role: 'narrator', targetWord: roundData.targetWord });
-                    io.to(roundData.roles.guesser).emit('role_assigned', { role: 'guesser' });
+                    if (roundData.roles.guesser) {
+                        io.to(roundData.roles.guesser).emit('role_assigned', { role: 'guesser' });
+                    }
 
                     roundData.roles.saboteurs.forEach((sabId: string) => {
                         io.to(sabId).emit('role_assigned', { role: 'saboteur' });

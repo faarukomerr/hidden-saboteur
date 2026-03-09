@@ -60,13 +60,13 @@ export class GameService {
         if (!room) throw new Error('Room not found');
 
         const players = room.players;
-        if (players.length < 3) throw new Error('Need at least 3 players'); // Minimum 3 players required
+        if (players.length < 1) throw new Error('Need at least 1 player'); // Minimum 1 for testing
 
         // Randomize roles
         const shuffled = players.sort(() => 0.5 - Math.random());
         const narrator = shuffled[0];
-        const guesser = shuffled[1];
-        const saboteurs = shuffled.slice(2);
+        const guesser = players.length > 1 ? shuffled[1] : null;
+        const saboteurs = players.length > 2 ? shuffled.slice(2) : [];
 
         // Generate Word via Gemini
         const words = await AIService.generateTargetWords("Everyday Objects", "Medium");
@@ -86,7 +86,9 @@ export class GameService {
         // Assign Roles
         const roleCreations = [];
         roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: narrator.id, roleType: 'narrator' } }));
-        roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: guesser.id, roleType: 'guesser' } }));
+        if (guesser) {
+            roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: guesser.id, roleType: 'guesser' } }));
+        }
 
         for (const sab of saboteurs) {
             roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: sab.id, roleType: 'saboteur' } }));
@@ -98,7 +100,7 @@ export class GameService {
             targetWord,
             roles: {
                 narrator: narrator.userId,
-                guesser: guesser.userId,
+                guesser: guesser ? guesser.userId : null,
                 saboteurs: saboteurs.map((s: any) => s.userId)
             }
         };
