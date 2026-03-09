@@ -73,8 +73,10 @@ export const initSocketServer = async (server: any) => {
             // 3. Submit Sabotage Words
             socket.on('submit_sabotage', async ({ roomCode, roundId, words }: { roomCode: string, roundId: string, words: string[] }) => {
                 try {
+                    const authenticPlayerId = await GameService.getPlayerIdByUserId(roomCode, socket.id);
+
                     for (const w of words) {
-                        await GameService.addSabotageWord(roundId, socket.id, w);
+                        await GameService.addSabotageWord(roundId, authenticPlayerId, w);
                     }
                     socket.emit('sabotage_words_saved', { status: 'success' });
 

@@ -106,6 +106,17 @@ export class GameService {
         };
     }
 
+    static async getPlayerIdByUserId(roomCode: string, userId: string): Promise<string> {
+        const room = await prisma.room.findUnique({ where: { roomCode } });
+        if (!room) throw new Error('Room not found');
+
+        const player = await prisma.player.findUnique({
+            where: { roomId_userId: { roomId: room.id, userId } }
+        });
+        if (!player) throw new Error('Player not found in room');
+        return player.id;
+    }
+
     static async addSabotageWord(roundId: string, playerId: string, word: string) {
         await prisma.sabotageWord.create({
             data: { roundId, playerId, word: word.toLowerCase() }
