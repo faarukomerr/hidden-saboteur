@@ -15,13 +15,18 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
     const [isConnected, setIsConnected] = useState(false);
 
     useEffect(() => {
-        // If the user hasn't explicitly set VITE_WS_URL, assume the Node server is running on the 
-        // same machine that is serving the frontend, just on port 8080.
-        // We use window.location.hostname to dynamically find the LAN IP instead of hardcoding localhost.
-        const wsUrl = import.meta.env?.VITE_WS_URL || `http://${window.location.hostname}:8080`;
+        // 1. Check if Vercel successfully injected the environment variable during build
+        const explicitWsUrl = import.meta.env?.VITE_WS_URL;
+
+        // 2. If it's missing (undefined or empty), fallback to the dynamic host (this fixes local connections)
+        const wsUrl = explicitWsUrl || `http://${window.location.hostname}:8080`;
+
+        console.log(`[Socket Context] Attempting connection to: ${wsUrl}`);
+        console.log(`[Socket Context] Raw ENV VITE_WS_URL was:`, explicitWsUrl);
 
         const socketInstance = io(wsUrl, {
-            transports: ['websocket'],
+            transports: ['websocket', 'polling'], // Fallback to long-polling if WSS fails on strict networks
+            reconnectionAttempts: 5,
             autoConnect: true,
         });
 
