@@ -16,13 +16,18 @@ export const SocketProvider = ({ children }: { children: ReactNode }) => {
 
     useEffect(() => {
         // 1. Check if Vercel successfully injected the environment variable during build
-        const explicitWsUrl = import.meta.env?.VITE_WS_URL;
+        let explicitWsUrl = import.meta.env?.VITE_WS_URL;
 
-        // 2. If it's missing (undefined or empty), fallback to the dynamic host (this fixes local connections)
+        // 2. Fool-proof fallback: If we are on Vercel, ALWAYS use the official Render backend.
+        if (!explicitWsUrl && window.location.hostname.includes('vercel.app')) {
+            explicitWsUrl = 'https://hidden-saboteur.onrender.com';
+        }
+
+        // 3. Fallback to Local Network Dynamic IP for dev testing only when not on Vercel
         const wsUrl = explicitWsUrl || `http://${window.location.hostname}:8080`;
 
         console.log(`[Socket Context] Attempting connection to: ${wsUrl}`);
-        console.log(`[Socket Context] Raw ENV VITE_WS_URL was:`, explicitWsUrl);
+        console.log(`[Socket Context] Raw ENV VITE_WS_URL was:`, import.meta.env?.VITE_WS_URL);
 
         const socketInstance = io(wsUrl, {
             transports: ['websocket', 'polling'], // Fallback to long-polling if WSS fails on strict networks
