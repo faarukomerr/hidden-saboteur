@@ -20,7 +20,7 @@ export const Lobby = () => {
     const { id: roomCode } = useParams<{ id: string }>();
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
-    const { socket } = useSocket();
+    const { socket, isConnected } = useSocket();
 
     const username = searchParams.get('user');
     const isHost = searchParams.get('host') === 'true';
@@ -37,6 +37,12 @@ export const Lobby = () => {
         if (!socket || !roomCode || !username) {
             navigate('/');
             return;
+        }
+
+        // Critical Fix: Emit join_room ONLY when the socket actually connects,
+        // and re-emit if they refresh the page or reconnect from mobile sleep.
+        if (isConnected) {
+            socket.emit('join_room', { roomCode, username });
         }
 
         socket.on('room_state_update', (data: { players: Player[] }) => {
@@ -57,7 +63,7 @@ export const Lobby = () => {
             socket.off('role_assigned');
             socket.off('phase_changed');
         };
-    }, [socket, roomCode, username, navigate]);
+    }, [socket, isConnected, roomCode, username, navigate]);
 
     const handleStartGame = () => {
         if (players.length < 3) {

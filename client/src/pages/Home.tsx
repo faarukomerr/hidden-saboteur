@@ -23,7 +23,6 @@ export const Home = () => {
         // Here we'll simulate the flow with WebSockets
         const fakeRoom = Math.random().toString(36).substring(2, 8).toUpperCase();
 
-        socket?.emit('join_room', { roomCode: fakeRoom, username });
         navigate(`/room/${fakeRoom}?user=${username}&host=true`);
     };
 
@@ -32,7 +31,6 @@ export const Home = () => {
         if (!username.trim() || !roomCode.trim()) return;
 
         setIsJoining(true);
-        socket?.emit('join_room', { roomCode: roomCode.toUpperCase(), username });
         navigate(`/room/${roomCode.toUpperCase()}?user=${username}`);
     };
 

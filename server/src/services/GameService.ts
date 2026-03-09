@@ -24,8 +24,17 @@ export class GameService {
             user = await prisma.user.create({ data: { id: userId, username } });
         }
 
-        const room = await prisma.room.findUnique({ where: { roomCode } });
-        if (!room) throw new Error('Room not found');
+        let room = await prisma.room.findUnique({ where: { roomCode } });
+        if (!room) {
+            // Auto-create the room if it doesn't exist yet, setting the first person as host
+            room = await prisma.room.create({
+                data: {
+                    roomCode,
+                    hostId: user.id,
+                    status: 'waiting'
+                }
+            });
+        }
 
         // Upsert player to room
         await prisma.player.upsert({
