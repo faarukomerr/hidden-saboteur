@@ -66,7 +66,7 @@ export const Lobby = () => {
     }, [socket, isConnected, roomCode, username, navigate]);
 
     const handleStartGame = () => {
-        if (players.length < 3) {
+        if (players.length < 1) {
             alert(t('needPlayersAlert'));
             return;
         }
@@ -171,7 +171,7 @@ export const Lobby = () => {
                             size="xl"
                             className="w-full py-8 text-3xl"
                             onClick={handleStartGame}
-                            disabled={players.length < 3}
+                            disabled={players.length < 1}
                         >
                             {t('startGame')}
                         </Button>
