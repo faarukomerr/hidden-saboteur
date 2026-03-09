@@ -2,11 +2,27 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+let genAI: GoogleGenerativeAI | null = null;
+let model: any = null;
+
+if (process.env.GEMINI_API_KEY) {
+    try {
+        genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+        model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    } catch (e) {
+        console.warn("Failed to initialize Gemini:", e);
+    }
+}
 
 export class AIService {
     static async generateTargetWords(category: string, difficulty: string): Promise<string[]> {
+        const fallbackWords = ['Keyboard', 'Monitor', 'Mouse', 'Desk', 'Chair', 'Microphone', 'Webcam', 'Headphones', 'Speaker', 'Router'];
+
+        if (!model) {
+            console.log('Skipping Gemini, using fallback words');
+            return fallbackWords;
+        }
+
         const prompt = `Generate 10 highly creative, tricky ${difficulty} difficulty items for a party word-guessing game in the category "${category}". Return exactly a JSON array of strings and nothing else.`;
 
         try {
@@ -20,18 +36,24 @@ export class AIService {
         } catch (error) {
             console.error('Failed to generate words via Gemini:', error);
             // Fallback list
-            return ['Keyboard', 'Monitor', 'Mouse', 'Desk', 'Chair', 'Microphone', 'Webcam', 'Headphones', 'Speaker', 'Router'];
+            return fallbackWords;
         }
     }
 
     static async generateHostCommentary(narrator: string, word: string): Promise<string> {
+        const fallbackInsult = `Oh wow, ${narrator}. You really stepped right into that one, didn't you?`;
+
+        if (!model) {
+            return fallbackInsult;
+        }
+
         const prompt = `You are a snarky, high-energy gameshow host. The narrator named ${narrator} just accidentally said the forbidden word "${word}" and lost the round. Write a 1-sentence sarcastic and funny insult.`;
 
         try {
             const result = await model.generateContent(prompt);
             return result.response.text().trim();
         } catch (error) {
-            return `Oh wow, ${narrator}. You really stepped right into that one, didn't you?`;
+            return fallbackInsult;
         }
     }
 }
