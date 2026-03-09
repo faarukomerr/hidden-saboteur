@@ -16,16 +16,19 @@ export const initSocketServer = async (server: any) => {
             transports: ['websocket', 'polling']
         });
 
-        const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-        try {
-            const pubClient = createClient({ url: redisUrl });
-            const subClient = pubClient.duplicate();
+        if (process.env.REDIS_URL) {
+            try {
+                const pubClient = createClient({ url: process.env.REDIS_URL });
+                const subClient = pubClient.duplicate();
 
-            await Promise.all([pubClient.connect(), subClient.connect()]);
-            console.log('✅ Redis connected for Socket.io scaling');
-            io.adapter(createAdapter(pubClient, subClient));
-        } catch (e) {
-            console.log('⚠️ Redis not available, falling back to memory adapter for local dev.');
+                await Promise.all([pubClient.connect(), subClient.connect()]);
+                console.log('✅ Redis connected for Socket.io scaling');
+                io.adapter(createAdapter(pubClient, subClient));
+            } catch (e) {
+                console.error('⚠️ Redis connection failed, falling back to memory adapter.', e);
+            }
+        } else {
+            console.log('ℹ️ No REDIS_URL provided, using default memory adapter.');
         }
 
         io.on('connection', (socket: Socket) => {
