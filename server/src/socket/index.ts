@@ -78,8 +78,12 @@ export const initSocketServer = async (server: any) => {
                     }
                     socket.emit('sabotage_words_saved', { status: 'success' });
 
-                    // Trigger the general room phase to advance to active gameplay
-                    io.to(roomCode).emit('phase_changed', { phase: 'narration' });
+                    // Check if ALL saboteurs in the room have submitted their words
+                    const isReady = await GameService.checkSaboteursReady(roundId);
+                    if (isReady) {
+                        // Trigger the general room phase to advance to active gameplay
+                        io.to(roomCode).emit('phase_changed', { phase: 'narration' });
+                    }
                 } catch (error: any) {
                     socket.emit('error', { message: error.message });
                 }

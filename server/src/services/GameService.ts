@@ -112,6 +112,23 @@ export class GameService {
         });
     }
 
+    static async checkSaboteursReady(roundId: string): Promise<boolean> {
+        // 1. Get total number of saboteurs assigned to this round
+        const saboteursCount = await prisma.role.count({
+            where: { roundId, roleType: 'saboteur' }
+        });
+
+        // 2. Get unique playerId count from sabotageWord table
+        const submittedWords = await prisma.sabotageWord.findMany({
+            where: { roundId },
+            select: { playerId: true },
+            distinct: ['playerId']
+        });
+
+        // If no saboteurs exist (solo testing) or all have submitted, transition.
+        return saboteursCount === 0 || submittedWords.length >= saboteursCount;
+    }
+
     static async verifySabotageWord(roundId: string, allegedWord: string): Promise<boolean> {
         const words = await prisma.sabotageWord.findMany({
             where: { roundId, isTriggered: false } // only check untriggered words
