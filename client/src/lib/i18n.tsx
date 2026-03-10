@@ -74,7 +74,13 @@ interface LanguageContextType {
 const LanguageContext = createContext<LanguageContextType | undefined>(undefined);
 
 export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [language, setLanguage] = useState<Language>('en'); // Default to English for now
+    // Auto-detect browser language or fallback to Turkish if requested heavily by the user
+    const [language, setLanguage] = useState<Language>(() => {
+        if (typeof window !== 'undefined') {
+            return navigator.language.toLowerCase().startsWith('tr') ? 'tr' : 'en';
+        }
+        return 'tr'; // Default to TR since the user specifically requested it and their OS locale might be TR
+    });
 
     // Translation function
     const t = (key: string): string => {

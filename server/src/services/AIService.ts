@@ -16,14 +16,14 @@ if (process.env.GEMINI_API_KEY) {
 
 export class AIService {
     static async generateTargetWords(category: string, difficulty: string): Promise<string[]> {
-        const fallbackWords = ['Keyboard', 'Monitor', 'Mouse', 'Desk', 'Chair', 'Microphone', 'Webcam', 'Headphones', 'Speaker', 'Router'];
+        const fallbackWords = ['Klavye', 'Monitör', 'Fare', 'Masa', 'Sandalye', 'Mikrofon', 'Kamera', 'Kulaklık', 'Hoparlör', 'Modem'];
 
         if (!model) {
             console.log('Skipping Gemini, using fallback words');
             return fallbackWords;
         }
 
-        const prompt = `Generate 10 highly creative, tricky ${difficulty} difficulty items for a party word-guessing game in the category "${category}". Return exactly a JSON array of strings and nothing else.`;
+        const prompt = `Generate 10 highly creative, tricky ${difficulty} difficulty items for a party word-guessing game in the category "${category}". The words MUST BE in Turkish. Return exactly a JSON array of strings and nothing else.`;
 
         try {
             const result = await model.generateContent(prompt);
@@ -41,13 +41,13 @@ export class AIService {
     }
 
     static async generateHostCommentary(narrator: string, word: string): Promise<string> {
-        const fallbackInsult = `Oh wow, ${narrator}. You really stepped right into that one, didn't you?`;
+        const fallbackInsult = `Vay canına, ${narrator}. Gerçekten o tuzağa düştün mü?`;
 
         if (!model) {
             return fallbackInsult;
         }
 
-        const prompt = `You are a snarky, high-energy gameshow host. The narrator named ${narrator} just accidentally said the forbidden word "${word}" and lost the round. Write a 1-sentence sarcastic and funny insult.`;
+        const prompt = `You are a snarky, high-energy gameshow host in a Turkish gameshow. The narrator named ${narrator} just accidentally said the forbidden word "${word}" and lost the round. Write a 1-sentence sarcastic and funny insult. The insult MUST BE in Turkish.`;
 
         try {
             const result = await model.generateContent(prompt);
