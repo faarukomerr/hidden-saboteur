@@ -30,6 +30,9 @@ export const initSocketServer = async (server: any) => {
             console.log('ℹ️ No REDIS_URL provided, using default memory adapter.');
         }
 
+        // Store language preference per room (set by host, used for all rounds)
+        const roomLanguage = new Map<string, string>();
+
         // Helper: assign and broadcast roles for a new round
         const startNewRound = async (roomCode: string, language: string) => {
             const roundData = await GameService.startRound(roomCode, language);
@@ -79,8 +82,10 @@ export const initSocketServer = async (server: any) => {
             // 2. Start Game (host triggers this)
             socket.on('start_game', async ({ roomCode, language }: { roomCode: string, language?: string }) => {
                 try {
-                    console.log(`🎮 start_game for room ${roomCode}, language=${language}`);
-                    await startNewRound(roomCode, language || 'en');
+                    const lang = language || 'en';
+                    roomLanguage.set(roomCode, lang); // Lock in language for all rounds
+                    console.log(`🌍 Room ${roomCode} language locked to: ${lang}`);
+                    await startNewRound(roomCode, lang);
                 } catch (error: any) {
                     console.error(`❌ start_game error:`, error);
                     socket.emit('error', { message: error.message });
@@ -112,15 +117,16 @@ export const initSocketServer = async (server: any) => {
                     const isCorrect = await GameService.checkGuess(roundId, guessWord);
                     if (isCorrect) {
                         const round = await GameService.getRoundById(roundId);
-                        // Correct guess → celebrate then start a NEW round with same players
+                        // Correct guess → celebrate then start a NEW round with same language
                         io.to(roomCode).emit('round_complete', {
                             guessWord,
                             targetWord: round?.targetWord
                         });
-                        // After 4s animation, auto-start the next round
+                        // After 4s animation, auto-start the next round using stored language
                         setTimeout(async () => {
                             try {
-                                await startNewRound(roomCode, language || 'en');
+                                const lang = roomLanguage.get(roomCode) || 'en';
+                                await startNewRound(roomCode, lang);
                             } catch (e) {
                                 console.error('Error starting next round:', e);
                             }
