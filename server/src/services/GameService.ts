@@ -65,11 +65,11 @@ export class GameService {
         }
         if (players.length < 1) throw new Error('Need at least 1 player'); // Minimum 1 for testing
 
-        // Randomize roles
+        // Randomize roles: 1 Narrator, 1 Saboteur, everyone else Guesses
         const shuffled = players.sort(() => 0.5 - Math.random());
         const narrator = shuffled[0];
-        const guesser = players.length > 1 ? shuffled[1] : null;
-        const saboteurs = players.length > 2 ? shuffled.slice(2) : [];
+        const saboteur = players.length > 1 ? shuffled[1] : null; // Saboteur also gets the target word
+        const guessers = players.length > 2 ? shuffled.slice(2) : []; // Everyone else guesses
 
         // Generate Word via Gemini in the chosen language
         const words = await AIService.generateTargetWords("Everyday Objects", "Medium", language);
@@ -86,15 +86,14 @@ export class GameService {
             }
         });
 
-        // Assign Roles
+        // Assign Roles in DB
         const roleCreations = [];
         roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: narrator.id, roleType: 'narrator' } }));
-        if (guesser) {
-            roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: guesser.id, roleType: 'guesser' } }));
+        if (saboteur) {
+            roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: saboteur.id, roleType: 'saboteur' } }));
         }
-
-        for (const sab of saboteurs) {
-            roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: sab.id, roleType: 'saboteur' } }));
+        for (const g of guessers) {
+            roleCreations.push(prisma.role.create({ data: { roundId: round.id, playerId: g.id, roleType: 'guesser' } }));
         }
         await Promise.all(roleCreations);
 
@@ -103,8 +102,8 @@ export class GameService {
             targetWord,
             roles: {
                 narrator: narrator.userId,
-                guesser: guesser ? guesser.userId : null,
-                saboteurs: saboteurs.map((s: any) => s.userId)
+                saboteur: saboteur ? saboteur.userId : null,
+                guessers: guessers.map((g: any) => g.userId)
             }
         };
     }
@@ -148,6 +147,10 @@ export class GameService {
         const round = await prisma.round.findUnique({ where: { id: roundId } });
         if (!round) return false;
         return round.targetWord.toLowerCase() === guessWord.trim().toLowerCase();
+    }
+
+    static async getRoundById(roundId: string) {
+        return prisma.round.findUnique({ where: { id: roundId } });
     }
 
     static async addSabotageWord(roundId: string, playerId: string, word: string) {

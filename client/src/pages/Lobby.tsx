@@ -80,13 +80,18 @@ export const Lobby = () => {
             setTimeout(() => setHostCommentary(null), 6000);
         });
 
-        socket.on('guess_result', (data: { correct: boolean, guessWord: string, targetWord?: string }) => {
+        socket.on('guess_result', (data: { correct: boolean, guessWord: string }) => {
             if (data.correct) {
-                setGameEvent({ type: 'correct_guess', message: `🎉 Doğru tahmin! Kelime "${data.guessWord}" idi!` });
+                setGameEvent({ type: 'correct_guess', message: `🎉 Doğru tahmin!` });
             } else {
                 setGameEvent({ type: 'wrong_guess', message: `❌ Yanlış tahmin: "${data.guessWord}"` });
             }
             setTimeout(() => setGameEvent(null), 3000);
+        });
+
+        socket.on('game_over', (data: { winner: string, guessWord: string, targetWord: string }) => {
+            setPhase('game_over');
+            setTargetWord(data.targetWord);
         });
 
         return () => {
@@ -97,6 +102,7 @@ export const Lobby = () => {
             socket.off('sabotage_failed');
             socket.off('host_commentary');
             socket.off('guess_result');
+            socket.off('game_over');
         };
     }, [socket, isConnected, roomCode, username, navigate]);
 
@@ -108,11 +114,31 @@ export const Lobby = () => {
         socket?.emit('start_game', { roomCode, language });
     };
 
+    // ─── GAME OVER ────────────────────────────────────────────────────────────
+    if (phase === 'game_over') {
+        return (
+            <motion.div
+                key="game-over"
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="flex flex-col items-center justify-center min-h-screen text-center p-6"
+            >
+                <div className="text-8xl mb-6">🎉</div>
+                <h1 className="text-5xl font-black text-brand-cyan mb-2">DOĞRU TAHMİN!</h1>
+                <p className="text-white/60 text-xl mb-4">Kelime: <span className="text-brand-pink font-bold text-3xl">{targetWord}</span></p>
+                <p className="text-white/40 mb-10">Yeni oyun başlıyor...</p>
+                <Button size="xl" onClick={() => navigate('/')} className="px-12">
+                    🏠 Ana Menüye Dön
+                </Button>
+            </motion.div>
+        );
+    }
+
     // ─── SABOTAGE INPUT ──────────────────────────────────────────────────────
     if (phase === 'sabotage_input' && myRole === 'saboteur') {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen p-6">
-                <SabotageInputPhase roomCode={roomCode!} roundId={roundId} />
+                <SabotageInputPhase roomCode={roomCode!} roundId={roundId} targetWord={targetWord || '?'} />
             </div>
         )
     }

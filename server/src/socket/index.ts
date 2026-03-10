@@ -56,14 +56,18 @@ export const initSocketServer = async (server: any) => {
 
                     const roundData = await GameService.startRound(roomCode, activeSocketIds, language || 'en');
 
-                    // Announce roles privately with the actual database Round ID
+                    // Announce roles privately
+                    // Narrator gets target word to describe
                     io.to(roundData.roles.narrator).emit('role_assigned', { role: 'narrator', targetWord: roundData.targetWord, roundId: roundData.roundId });
-                    if (roundData.roles.guesser) {
-                        io.to(roundData.roles.guesser).emit('role_assigned', { role: 'guesser', roundId: roundData.roundId });
+
+                    // Saboteur ALSO gets the target word + roundId to submit traps
+                    if (roundData.roles.saboteur) {
+                        io.to(roundData.roles.saboteur).emit('role_assigned', { role: 'saboteur', targetWord: roundData.targetWord, roundId: roundData.roundId });
                     }
 
-                    roundData.roles.saboteurs.forEach((sabId: string) => {
-                        io.to(sabId).emit('role_assigned', { role: 'saboteur', roundId: roundData.roundId });
+                    // All Guessers just get their role + roundId
+                    roundData.roles.guessers.forEach((gId: string) => {
+                        io.to(gId).emit('role_assigned', { role: 'guesser', roundId: roundData.roundId });
                     });
 
                     // Tell the room that the Sabotage phase has begun
@@ -98,7 +102,13 @@ export const initSocketServer = async (server: any) => {
             socket.on('submit_guess', async ({ roomCode, roundId, guessWord }: { roomCode: string, roundId: string, guessWord: string }) => {
                 try {
                     const isCorrect = await GameService.checkGuess(roundId, guessWord);
-                    io.to(roomCode).emit('guess_result', { correct: isCorrect, guessWord });
+                    if (isCorrect) {
+                        // Broadcast success to all and signal game is over — clients will return to home
+                        const round = await GameService.getRoundById(roundId);
+                        io.to(roomCode).emit('game_over', { winner: socket.id, guessWord, targetWord: round?.targetWord });
+                    } else {
+                        io.to(roomCode).emit('guess_result', { correct: false, guessWord });
+                    }
                 } catch (error: any) {
                     socket.emit('error', { message: error.message });
                 }
