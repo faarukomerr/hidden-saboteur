@@ -81,17 +81,26 @@ export const Lobby = () => {
         });
 
         socket.on('guess_result', (data: { correct: boolean, guessWord: string }) => {
-            if (data.correct) {
-                setGameEvent({ type: 'correct_guess', message: `🎉 Doğru tahmin!` });
-            } else {
-                setGameEvent({ type: 'wrong_guess', message: `❌ Yanlış tahmin: "${data.guessWord}"` });
-            }
+            // wrong guess only
+            setGameEvent({ type: 'wrong_guess', message: `❌ Yanlış tahmin: "${data.guessWord}"` });
             setTimeout(() => setGameEvent(null), 3000);
         });
 
-        socket.on('game_over', (data: { winner: string, guessWord: string, targetWord: string }) => {
+        // Correct guess: backend auto-starts new round after 4 seconds
+        socket.on('round_complete', (data: { guessWord: string, targetWord: string }) => {
+            setGameEvent({ type: 'correct_guess', message: `🎉 Doğru! Kelime "${data.targetWord}" idi! Yeni tur başlıyor...` });
+            // Reset role + phase after 4s (matches server delay)
+            setTimeout(() => {
+                setMyRole(null);
+                setTargetWord(null);
+                setPhase('lobby');
+                setGameEvent(null);
+            }, 4000);
+        });
+
+        // YANDI sabotage: forbidden word caught → full game over, go home
+        socket.on('game_over', (data: { reason: string, word?: string }) => {
             setPhase('game_over');
-            setTargetWord(data.targetWord);
         });
 
         return () => {
@@ -102,6 +111,7 @@ export const Lobby = () => {
             socket.off('sabotage_failed');
             socket.off('host_commentary');
             socket.off('guess_result');
+            socket.off('round_complete');
             socket.off('game_over');
         };
     }, [socket, isConnected, roomCode, username, navigate]);
@@ -114,7 +124,7 @@ export const Lobby = () => {
         socket?.emit('start_game', { roomCode, language });
     };
 
-    // ─── GAME OVER ────────────────────────────────────────────────────────────
+    // ─── GAME OVER (Saboteur Wins) ────────────────────────────────────────────
     if (phase === 'game_over') {
         return (
             <motion.div
@@ -123,10 +133,9 @@ export const Lobby = () => {
                 animate={{ opacity: 1, scale: 1 }}
                 className="flex flex-col items-center justify-center min-h-screen text-center p-6"
             >
-                <div className="text-8xl mb-6">🎉</div>
-                <h1 className="text-5xl font-black text-brand-cyan mb-2">DOĞRU TAHMİN!</h1>
-                <p className="text-white/60 text-xl mb-4">Kelime: <span className="text-brand-pink font-bold text-3xl">{targetWord}</span></p>
-                <p className="text-white/40 mb-10">Yeni oyun başlıyor...</p>
+                <div className="text-8xl mb-6">🔥</div>
+                <h1 className="text-5xl font-black text-brand-pink mb-2">YANDI! SABOTAJCI KAZANDI!</h1>
+                <p className="text-white/60 text-lg mb-10">Anlatıcı yasaklı kelimeyi söyledi ve oyunu kaybetti!</p>
                 <Button size="xl" onClick={() => navigate('/')} className="px-12">
                     🏠 Ana Menüye Dön
                 </Button>
@@ -204,7 +213,7 @@ export const Lobby = () => {
         };
 
         const handleGuess = (guessWord: string) => {
-            socket?.emit('submit_guess', { roomCode, roundId, guessWord });
+            socket?.emit('submit_guess', { roomCode, roundId, guessWord, language });
         };
 
         return (

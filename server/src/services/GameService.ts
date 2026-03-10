@@ -52,18 +52,15 @@ export class GameService {
         return players.map((p: any) => ({ id: p.user.id, name: p.user.username, score: p.score }));
     }
 
-    static async startRound(roomCode: string, activeSocketIds?: string[], language: string = 'en') {
+    static async startRound(roomCode: string, language: string = 'en') {
         const room = await prisma.room.findUnique({
             where: { roomCode },
             include: { players: true, rounds: true }
         });
         if (!room) throw new Error('Room not found');
 
-        let players = room.players;
-        if (activeSocketIds) {
-            players = players.filter(p => activeSocketIds.includes(p.userId));
-        }
-        if (players.length < 1) throw new Error('Need at least 1 player'); // Minimum 1 for testing
+        const players = room.players;
+        if (players.length < 1) throw new Error('Need at least 1 player');
 
         // Randomize roles: 1 Narrator, 1 Saboteur, everyone else Guesses
         const shuffled = players.sort(() => 0.5 - Math.random());
