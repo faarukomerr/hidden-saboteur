@@ -15,15 +15,18 @@ if (process.env.GEMINI_API_KEY) {
 }
 
 export class AIService {
-    static async generateTargetWords(category: string, difficulty: string): Promise<string[]> {
-        const fallbackWords = ['Klavye', 'Monitör', 'Fare', 'Masa', 'Sandalye', 'Mikrofon', 'Kamera', 'Kulaklık', 'Hoparlör', 'Modem'];
+    static async generateTargetWords(category: string, difficulty: string, language: string = 'en'): Promise<string[]> {
+        const fallbackWordsTR = ['Klavye', 'Monitör', 'Fare', 'Masa', 'Sandalye', 'Mikrofon', 'Kamera', 'Kulaklık', 'Hoparlör', 'Modem'];
+        const fallbackWordsEN = ['Keyboard', 'Monitor', 'Mouse', 'Desk', 'Chair', 'Microphone', 'Webcam', 'Headphones', 'Speaker', 'Router'];
+        const fallbackWords = language === 'tr' ? fallbackWordsTR : fallbackWordsEN;
+        const langInstruction = language === 'tr' ? 'The words MUST BE in Turkish.' : 'The words must be in English.';
 
         if (!model) {
             console.log('Skipping Gemini, using fallback words');
             return fallbackWords;
         }
 
-        const prompt = `Generate 10 highly creative, tricky ${difficulty} difficulty items for a party word-guessing game in the category "${category}". The words MUST BE in Turkish. Return exactly a JSON array of strings and nothing else.`;
+        const prompt = `Generate 10 highly creative, tricky ${difficulty} difficulty items for a party word-guessing game in the category "${category}". ${langInstruction} Return exactly a JSON array of strings and nothing else.`;
 
         try {
             const result = await model.generateContent(prompt);

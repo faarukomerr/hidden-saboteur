@@ -49,12 +49,12 @@ export const initSocketServer = async (server: any) => {
             });
 
             // 2. Start Game
-            socket.on('start_game', async ({ roomCode }: { roomCode: string }) => {
+            socket.on('start_game', async ({ roomCode, language }: { roomCode: string, language?: string }) => {
                 try {
                     const sockets = await io.in(roomCode).fetchSockets();
                     const activeSocketIds = sockets.map(s => s.id);
 
-                    const roundData = await GameService.startRound(roomCode, activeSocketIds);
+                    const roundData = await GameService.startRound(roomCode, activeSocketIds, language || 'en');
 
                     // Announce roles privately with the actual database Round ID
                     io.to(roundData.roles.narrator).emit('role_assigned', { role: 'narrator', targetWord: roundData.targetWord, roundId: roundData.roundId });
@@ -89,6 +89,16 @@ export const initSocketServer = async (server: any) => {
                         // Trigger the general room phase to advance to active gameplay
                         io.to(roomCode).emit('phase_changed', { phase: 'narration' });
                     }
+                } catch (error: any) {
+                    socket.emit('error', { message: error.message });
+                }
+            });
+
+            // 3b. Submit Guess
+            socket.on('submit_guess', async ({ roomCode, roundId, guessWord }: { roomCode: string, roundId: string, guessWord: string }) => {
+                try {
+                    const isCorrect = await GameService.checkGuess(roundId, guessWord);
+                    io.to(roomCode).emit('guess_result', { correct: isCorrect, guessWord });
                 } catch (error: any) {
                     socket.emit('error', { message: error.message });
                 }
