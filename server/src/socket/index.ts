@@ -51,7 +51,10 @@ export const initSocketServer = async (server: any) => {
             // 2. Start Game
             socket.on('start_game', async ({ roomCode }: { roomCode: string }) => {
                 try {
-                    const roundData = await GameService.startRound(roomCode);
+                    const sockets = await io.in(roomCode).fetchSockets();
+                    const activeSocketIds = sockets.map(s => s.id);
+
+                    const roundData = await GameService.startRound(roomCode, activeSocketIds);
 
                     // Announce roles privately with the actual database Round ID
                     io.to(roundData.roles.narrator).emit('role_assigned', { role: 'narrator', targetWord: roundData.targetWord, roundId: roundData.roundId });
@@ -118,8 +121,16 @@ export const initSocketServer = async (server: any) => {
                 }
             });
 
-            socket.on('disconnect', () => {
+            socket.on('disconnect', async () => {
                 console.log(`🔌 Client disconnected: ${socket.id}`);
+                try {
+                    const updates = await GameService.removePlayerByUserId(socket.id);
+                    for (const u of updates) {
+                        io.to(u.roomCode).emit('room_state_update', { players: u.players });
+                    }
+                } catch (e) {
+                    console.error('Error handling disconnect:', e);
+                }
             });
         });
 

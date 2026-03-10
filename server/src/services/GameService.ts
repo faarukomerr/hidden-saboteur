@@ -52,14 +52,17 @@ export class GameService {
         return players.map((p: any) => ({ id: p.user.id, name: p.user.username, score: p.score }));
     }
 
-    static async startRound(roomCode: string) {
+    static async startRound(roomCode: string, activeSocketIds?: string[]) {
         const room = await prisma.room.findUnique({
             where: { roomCode },
             include: { players: true, rounds: true }
         });
         if (!room) throw new Error('Room not found');
 
-        const players = room.players;
+        let players = room.players;
+        if (activeSocketIds) {
+            players = players.filter(p => activeSocketIds.includes(p.userId));
+        }
         if (players.length < 1) throw new Error('Need at least 1 player'); // Minimum 1 for testing
 
         // Randomize roles
@@ -115,6 +118,30 @@ export class GameService {
         });
         if (!player) throw new Error('Player not found in room');
         return player.id;
+    }
+
+    static async removePlayerByUserId(userId: string): Promise<{ roomCode: string, players: any[] }[]> {
+        const players = await prisma.player.findMany({
+            where: { userId },
+            include: { room: true }
+        });
+
+        const updates = [];
+
+        for (const p of players) {
+            await prisma.player.delete({ where: { id: p.id } });
+
+            const remainingPlayers = await prisma.player.findMany({
+                where: { roomId: p.roomId },
+                include: { user: true }
+            });
+
+            updates.push({
+                roomCode: p.room.roomCode,
+                players: remainingPlayers.map((rp: any) => ({ id: rp.user.id, name: rp.user.username, score: rp.score }))
+            });
+        }
+        return updates;
     }
 
     static async addSabotageWord(roundId: string, playerId: string, word: string) {
