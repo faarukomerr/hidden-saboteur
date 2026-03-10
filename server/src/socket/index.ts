@@ -7,10 +7,7 @@ import { createClient } from 'redis';
 export const initSocketServer = async (server: any) => {
     try {
         const io = new Server(server, {
-            cors: {
-                origin: '*',
-                methods: ["GET", "POST"]
-            },
+            cors: { origin: '*', methods: ["GET", "POST"] },
             pingTimeout: 60000,
             pingInterval: 25000,
             transports: ['websocket', 'polling']
@@ -21,70 +18,112 @@ export const initSocketServer = async (server: any) => {
                 const pubClient = createClient({ url: process.env.REDIS_URL });
                 const subClient = pubClient.duplicate();
                 await Promise.all([pubClient.connect(), subClient.connect()]);
-                console.log('✅ Redis connected for Socket.io scaling');
+                console.log('✅ Redis connected');
                 io.adapter(createAdapter(pubClient, subClient));
             } catch (e) {
-                console.error('⚠️ Redis connection failed, falling back to memory adapter.', e);
+                console.error('⚠️ Redis failed, using memory adapter.', e);
             }
-        } else {
-            console.log('ℹ️ No REDIS_URL provided, using default memory adapter.');
         }
 
-        // Store language preference per room (set by host, used for all rounds)
+        // ─── Per-room state ──────────────────────────────────────────────
         const roomLanguage = new Map<string, string>();
+        const roomTimers = new Map<string, NodeJS.Timeout>();     // countdown interval
+        const roomTimeLeft = new Map<string, number>();            // seconds left
+        const roomSaboteurWords = new Map<string, string[]>();     // words the saboteur planted
+        const socketUsername = new Map<string, string>();          // socket.id → username
 
-        // Helper: assign and broadcast roles for a new round
+        // ─── Helper: start a new round ───────────────────────────────────
         const startNewRound = async (roomCode: string, language: string) => {
+            // Clear existing timer
+            const existingTimer = roomTimers.get(roomCode);
+            if (existingTimer) clearInterval(existingTimer);
+            roomTimers.delete(roomCode);
+            roomTimeLeft.delete(roomCode);
+            roomSaboteurWords.delete(roomCode);
+
             const roundData = await GameService.startRound(roomCode, language);
 
-            // Narrator gets target word to describe
+            // Narrator
             io.to(roundData.roles.narrator).emit('role_assigned', {
-                role: 'narrator',
-                targetWord: roundData.targetWord,
-                roundId: roundData.roundId
+                role: 'narrator', targetWord: roundData.targetWord, roundId: roundData.roundId
             });
 
-            // Saboteur ALSO gets the target word so they can set traps wisely
+            // Saboteur (also gets target word)
             if (roundData.roles.saboteur) {
                 io.to(roundData.roles.saboteur).emit('role_assigned', {
-                    role: 'saboteur',
-                    targetWord: roundData.targetWord,
-                    roundId: roundData.roundId
+                    role: 'saboteur', targetWord: roundData.targetWord, roundId: roundData.roundId
                 });
             }
 
-            // All Guessers get their role + roundId
+            // Guessers
             roundData.roles.guessers.forEach((gId: string) => {
                 io.to(gId).emit('role_assigned', { role: 'guesser', roundId: roundData.roundId });
             });
 
-            // Tell the room that the Sabotage input phase has begun
             io.to(roomCode).emit('phase_changed', { phase: 'sabotage_input' });
-
             return roundData;
         };
 
+        // ─── Timer management ────────────────────────────────────────────
+        const startRoundTimer = (roomCode: string, durationSeconds: number) => {
+            const existingTimer = roomTimers.get(roomCode);
+            if (existingTimer) clearInterval(existingTimer);
+
+            roomTimeLeft.set(roomCode, durationSeconds);
+            io.to(roomCode).emit('timer_sync', { timeLeft: durationSeconds });
+
+            const interval = setInterval(() => {
+                const current = roomTimeLeft.get(roomCode) || 0;
+                const next = current - 1;
+                roomTimeLeft.set(roomCode, next);
+
+                io.to(roomCode).emit('timer_sync', { timeLeft: next });
+
+                if (next <= 0) {
+                    clearInterval(interval);
+                    roomTimers.delete(roomCode);
+                    roomTimeLeft.delete(roomCode);
+                    // Time's up! → auto-start new round
+                    io.to(roomCode).emit('round_complete', { guessWord: '', targetWord: 'Süre Doldu!' });
+                    setTimeout(async () => {
+                        try {
+                            const lang = roomLanguage.get(roomCode) || 'en';
+                            await startNewRound(roomCode, lang);
+                        } catch (e) { console.error('Timer new round error:', e); }
+                    }, 3000);
+                }
+            }, 1000);
+
+            roomTimers.set(roomCode, interval);
+        };
+
+        // ─── Connections ─────────────────────────────────────────────────
         io.on('connection', (socket: Socket) => {
-            console.log(`🔌 Client connected: ${socket.id}`);
+            console.log(`🔌 Connected: ${socket.id}`);
 
             // 1. Join Room
             socket.on('join_room', async ({ roomCode, username }: { roomCode: string, username: string }) => {
                 try {
+                    socketUsername.set(socket.id, username);
                     const players = await GameService.joinRoom(roomCode, socket.id, username);
                     socket.join(roomCode);
-                    console.log(`✅ ${username} (${socket.id}) joined ${roomCode}`);
                     io.to(roomCode).emit('room_state_update', { players });
+
+                    // Late join: if there's an active timer, sync it
+                    const timeLeft = roomTimeLeft.get(roomCode);
+                    if (timeLeft !== undefined) {
+                        socket.emit('timer_sync', { timeLeft });
+                    }
                 } catch (error: any) {
                     socket.emit('error', { message: error.message });
                 }
             });
 
-            // 2. Start Game (host triggers this)
+            // 2. Start Game
             socket.on('start_game', async ({ roomCode, language }: { roomCode: string, language?: string }) => {
                 try {
                     const lang = language || 'en';
-                    roomLanguage.set(roomCode, lang); // Lock in language for all rounds
-                    console.log(`🌍 Room ${roomCode} language locked to: ${lang}`);
+                    roomLanguage.set(roomCode, lang);
                     await startNewRound(roomCode, lang);
                 } catch (error: any) {
                     console.error(`❌ start_game error:`, error);
@@ -99,9 +138,11 @@ export const initSocketServer = async (server: any) => {
                     for (const w of words) {
                         await GameService.addSabotageWord(roundId, authenticPlayerId, w);
                     }
-                    socket.emit('sabotage_words_saved', { status: 'success' });
 
-                    // Since there is only 1 saboteur, this is always ready after 1 submission
+                    // Store the saboteur's words so we can broadcast them back during narration
+                    roomSaboteurWords.set(roomCode, words);
+                    socket.emit('sabotage_words_saved', { status: 'success', words });
+
                     const isReady = await GameService.checkSaboteursReady(roundId);
                     if (isReady) {
                         io.to(roomCode).emit('phase_changed', { phase: 'narration' });
@@ -111,50 +152,64 @@ export const initSocketServer = async (server: any) => {
                 }
             });
 
-            // 4. Guesser submits a guess → correct = NEW ROUND, wrong = keep going
-            socket.on('submit_guess', async ({ roomCode, roundId, guessWord, language }: { roomCode: string, roundId: string, guessWord: string, language?: string }) => {
+            // 4. Narrator sets the timer duration
+            socket.on('set_timer', async ({ roomCode, durationSeconds }: { roomCode: string, durationSeconds: number }) => {
+                // Clamp to 60-120 range (1-2 minutes)
+                const time = Math.max(60, Math.min(120, durationSeconds));
+                startRoundTimer(roomCode, time);
+                io.to(roomCode).emit('timer_started', { durationSeconds: time });
+            });
+
+            // 5. Guesser submits a guess (with username)
+            socket.on('submit_guess', async ({ roomCode, roundId, guessWord }: { roomCode: string, roundId: string, guessWord: string }) => {
                 try {
+                    const guesserName = socketUsername.get(socket.id) || 'Anonim';
                     const isCorrect = await GameService.checkGuess(roundId, guessWord);
+
                     if (isCorrect) {
                         const round = await GameService.getRoundById(roundId);
-                        // Correct guess → celebrate then start a NEW round with same language
+                        // Stop timer
+                        const timer = roomTimers.get(roomCode);
+                        if (timer) clearInterval(timer);
+                        roomTimers.delete(roomCode);
+                        roomTimeLeft.delete(roomCode);
+
                         io.to(roomCode).emit('round_complete', {
-                            guessWord,
-                            targetWord: round?.targetWord
+                            guessWord, targetWord: round?.targetWord, winnerName: guesserName
                         });
-                        // After 4s animation, auto-start the next round using stored language
                         setTimeout(async () => {
                             try {
                                 const lang = roomLanguage.get(roomCode) || 'en';
                                 await startNewRound(roomCode, lang);
-                            } catch (e) {
-                                console.error('Error starting next round:', e);
-                            }
+                            } catch (e) { console.error('Next round error:', e); }
                         }, 4000);
                     } else {
-                        io.to(roomCode).emit('guess_result', { correct: false, guessWord });
+                        io.to(roomCode).emit('guess_result', { correct: false, guessWord, guesserName });
                     }
                 } catch (error: any) {
                     socket.emit('error', { message: error.message });
                 }
             });
 
-            // 5. YANDI! — Saboteur catches the Narrator saying a forbidden word → GAME OVER
+            // 6. YANDI! (Saboteur catches narrator)
             socket.on('trigger_sabotage', async ({ roomCode, roundId, word }: { roomCode: string, roundId: string, word: string }) => {
                 try {
                     const isValid = await GameService.verifySabotageWord(roundId, word);
                     if (isValid) {
-                        // Valid forbidden word → game ends, saboteur wins
+                        // Stop timer
+                        const timer = roomTimers.get(roomCode);
+                        if (timer) clearInterval(timer);
+                        roomTimers.delete(roomCode);
+                        roomTimeLeft.delete(roomCode);
+
                         io.in(roomCode).emit('sabotage_confirmed', { word, saboteurId: socket.id });
 
-                        // Brief delay for celebration animation, then HOST COMMENTARY + GAME OVER
                         setTimeout(async () => {
                             try {
-                                const insult = await AIService.generateHostCommentary('Narrator', word);
+                                const narratorName = 'Anlatıcı';
+                                const insult = await AIService.generateHostCommentary(narratorName, word);
                                 io.in(roomCode).emit('host_commentary', { message: insult });
-                            } catch (e) { /* ignore AI errors */ }
-
-                            // After commentary, emit game_over so everyone goes back to lobby
+                            } catch (e) { /* ignore AI */ }
                             setTimeout(() => {
                                 io.in(roomCode).emit('game_over', { reason: 'sabotage', word });
                             }, 4000);
@@ -167,16 +222,42 @@ export const initSocketServer = async (server: any) => {
                 }
             });
 
-            // 6. Disconnect — clean up ghost player from DB
+            // 7. Restart round (bug recovery)
+            socket.on('restart_round', async ({ roomCode }: { roomCode: string }) => {
+                try {
+                    const timer = roomTimers.get(roomCode);
+                    if (timer) clearInterval(timer);
+                    roomTimers.delete(roomCode);
+                    roomTimeLeft.delete(roomCode);
+
+                    const lang = roomLanguage.get(roomCode) || 'en';
+                    await startNewRound(roomCode, lang);
+                } catch (error: any) {
+                    socket.emit('error', { message: error.message });
+                }
+            });
+
+            // 8. Return to lobby
+            socket.on('return_to_lobby', async ({ roomCode }: { roomCode: string }) => {
+                const timer = roomTimers.get(roomCode);
+                if (timer) clearInterval(timer);
+                roomTimers.delete(roomCode);
+                roomTimeLeft.delete(roomCode);
+
+                io.to(roomCode).emit('phase_changed', { phase: 'lobby' });
+            });
+
+            // 9. Disconnect — clean ghost
             socket.on('disconnect', async () => {
-                console.log(`🔌 Client disconnected: ${socket.id}`);
+                console.log(`🔌 Disconnected: ${socket.id}`);
+                socketUsername.delete(socket.id);
                 try {
                     const updates = await GameService.removePlayerByUserId(socket.id);
                     for (const u of updates) {
                         io.to(u.roomCode).emit('room_state_update', { players: u.players });
                     }
                 } catch (e) {
-                    console.error('Error handling disconnect:', e);
+                    console.error('Disconnect error:', e);
                 }
             });
         });
