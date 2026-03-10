@@ -122,11 +122,10 @@ export const initSocketServer = async (server: any) => {
 
                 if (state.timeLeft <= 0) {
                     clearTimer(roomCode);
-                    // Time expired → narrator gets +2 for surviving, start new round
-                    io.to(roomCode).emit('round_complete', {
+                    // Time expired → show round summary, wait for host to start next
+                    io.to(roomCode).emit('round_summary', {
                         targetWord: state.targetWord, winnerName: '', reason: 'timeout'
                     });
-                    setTimeout(() => startNewRound(roomCode).catch(console.error), 4000);
                 }
             }, 1000);
         };
@@ -209,14 +208,12 @@ export const initSocketServer = async (server: any) => {
                     if (isCorrect) {
                         clearTimer(roomCode);
                         const state = getRoom(roomCode);
-                        // Scoring: guesser +10
                         state.scores[socket.id] = (state.scores[socket.id] || 0) + 10;
                         broadcastScores(roomCode);
 
-                        io.to(roomCode).emit('round_complete', {
+                        io.to(roomCode).emit('round_summary', {
                             targetWord: state.targetWord, winnerName: name, reason: 'guess'
                         });
-                        setTimeout(() => startNewRound(roomCode).catch(console.error), 4000);
                     } else {
                         io.to(roomCode).emit('guess_result', { correct: false, guessWord, guesserName: name });
                     }
@@ -266,14 +263,26 @@ export const initSocketServer = async (server: any) => {
                 }
             });
 
-            // 8. Return to lobby
+            // 8. Next round (host clicks button after round summary)
+            socket.on('next_round', async ({ roomCode }: { roomCode: string }) => {
+                try {
+                    clearTimer(roomCode);
+                    io.to(roomCode).emit('force_reset', {});
+                    await startNewRound(roomCode);
+                } catch (error: any) {
+                    socket.emit('error', { message: error.message });
+                }
+            });
+
+            // 9. Return to lobby (preserve scores)
             socket.on('return_to_lobby', ({ roomCode }: { roomCode: string }) => {
                 clearTimer(roomCode);
                 io.to(roomCode).emit('force_reset', {});
                 io.to(roomCode).emit('phase_changed', { phase: 'lobby' });
+                broadcastScores(roomCode); // re-send scores so lobby shows them
             });
 
-            // 9. Disconnect
+            // 10. Disconnect
             socket.on('disconnect', async () => {
                 socketUsername.delete(socket.id);
                 const room = socketRoom.get(socket.id);

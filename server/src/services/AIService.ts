@@ -16,29 +16,42 @@ if (process.env.GEMINI_API_KEY) {
 
 export class AIService {
     static async generateTargetWords(category: string, difficulty: string, language: string = 'en'): Promise<string[]> {
-        const fallbackWordsTR = ['Klavye', 'Monitör', 'Fare', 'Masa', 'Sandalye', 'Mikrofon', 'Kamera', 'Kulaklık', 'Hoparlör', 'Modem'];
-        const fallbackWordsEN = ['Keyboard', 'Monitor', 'Mouse', 'Desk', 'Chair', 'Microphone', 'Webcam', 'Headphones', 'Speaker', 'Router'];
+        const fallbackWordsTR = ['Buzdolabı', 'Palyaço', 'Teleskop', 'Volkan', 'Denizaltı', 'Gökkuşağı', 'Kaktüs', 'Bumerang', 'Periskop', 'Trampolin', 'Ahtapot', 'Karınca', 'Ambulans', 'Termos', 'Pergel'];
+        const fallbackWordsEN = ['Refrigerator', 'Telescope', 'Volcano', 'Submarine', 'Rainbow', 'Cactus', 'Boomerang', 'Periscope', 'Trampoline', 'Octopus', 'Ambulance', 'Thermos', 'Compass', 'Chandelier', 'Platypus'];
         const fallbackWords = language === 'tr' ? fallbackWordsTR : fallbackWordsEN;
-        const langInstruction = language === 'tr' ? 'The words MUST BE in Turkish.' : 'The words must be in English.';
 
-        if (!model) {
-            console.log('Skipping Gemini, using fallback words');
-            return fallbackWords;
-        }
+        if (!model) return fallbackWords;
 
-        const prompt = `Generate 10 highly creative, tricky ${difficulty} difficulty items for a party word-guessing game in the category "${category}". ${langInstruction} Return exactly a JSON array of strings and nothing else.`;
+        const categories = [
+            'Animals & Nature', 'Food & Cooking', 'Sports & Games', 'Technology & Science',
+            'History & Culture', 'Music & Art', 'Travel & Places', 'Professions & Jobs',
+            'Household Items', 'Fantasy & Mythology', 'Vehicles & Transport', 'Space & Astronomy'
+        ];
+        const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+        const langName = language === 'tr' ? 'Turkish' : 'English';
+
+        const prompt = `You are a creative word game designer. Generate 12 unique, challenging words for a party word-guessing game.
+
+Rules:
+- Category: "${randomCategory}"
+- Language: ALL words MUST be in ${langName}
+- Difficulty: Hard — pick words that are fun to describe but NOT obvious
+- Words should be specific nouns (not abstract concepts)
+- Mix common and uncommon words for variety
+- Each word should be 1-2 words maximum
+- Make them fun and interesting to act out or describe
+
+Return ONLY a JSON array of 12 strings, nothing else.`;
 
         try {
             const result = await model.generateContent(prompt);
             let text = result.response.text().trim();
-            // Handle markdown wrapper
-            if (text.startsWith('```json')) {
-                text = text.substring(7, text.length - 3).trim();
-            }
-            return JSON.parse(text);
+            if (text.startsWith('\`\`\`json')) text = text.substring(7, text.length - 3).trim();
+            if (text.startsWith('\`\`\`')) text = text.substring(3, text.length - 3).trim();
+            const parsed = JSON.parse(text);
+            return Array.isArray(parsed) && parsed.length > 0 ? parsed : fallbackWords;
         } catch (error) {
-            console.error('Failed to generate words via Gemini:', error);
-            // Fallback list
+            console.error('Gemini word generation failed:', error);
             return fallbackWords;
         }
     }
