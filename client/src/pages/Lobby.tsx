@@ -160,7 +160,7 @@ export const Lobby = () => {
         const s = timeLeft % 60;
         const urgent = timeLeft <= 10;
         return (
-            <div className={`fixed top-0 left-0 right-0 z-[60] flex items-center justify-center py-3 bg-black/90 backdrop-blur-xl border-b border-white/10 ${urgent ? 'border-brand-pink/50' : ''}`}>
+            <div className={`fixed top-0 left-0 right-0 z-[60] flex items-center justify-center py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] bg-black/90 backdrop-blur-xl border-b border-white/10 ${urgent ? 'border-brand-pink/50' : ''}`}>
                 <div className={`flex items-center gap-3 ${urgent ? 'animate-pulse' : ''}`}>
                     <span className="text-lg">⏱️</span>
                     <span className={`text-3xl font-black font-mono tracking-[0.2em] ${urgent ? 'text-brand-pink' : 'text-brand-cyan'}`}>
@@ -187,7 +187,7 @@ export const Lobby = () => {
     const MiniScoreboard = () => {
         if (scores.length === 0) return null;
         return (
-            <div className="fixed top-14 right-3 z-50 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl px-4 py-3 space-y-1 min-w-[150px] shadow-2xl">
+            <div className="fixed right-3 z-50 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl px-3 py-2.5 space-y-1 min-w-[130px] shadow-2xl" style={{ top: 'calc(3.5rem + env(safe-area-inset-top))' }}>
                 <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-1">🏆 Skor</p>
                 {scores.slice(0, 5).map((s, i) => (
                     <div key={i} className="flex justify-between text-xs gap-3">
@@ -256,7 +256,7 @@ export const Lobby = () => {
         const isTimeout = summaryData.reason === 'timeout';
         const isGuess = summaryData.reason === 'guess';
         return (
-            <div className="flex flex-col items-center justify-center min-h-screen text-center p-6">
+            <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
                 <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.4 }} className="flex flex-col items-center">
                     <div className="mb-6">
                         {isGuess ? <Trophy className="w-20 h-20 text-green-400 drop-shadow-[0_0_20px_rgba(74,222,128,0.5)]" /> : <Clock className="w-20 h-20 text-brand-pink drop-shadow-[0_0_20px_rgba(255,0,85,0.5)]" />}
@@ -289,7 +289,7 @@ export const Lobby = () => {
                         </NeonCard>
                     )}
 
-                    <div className="flex gap-3 flex-wrap justify-center">
+                    <div className="flex gap-3 flex-col sm:flex-row justify-center w-full max-w-sm">
                         {isHost && (
                             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
                                 <Button size="xl" className="px-12 py-5 text-xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
@@ -314,9 +314,9 @@ export const Lobby = () => {
     // ══════════════════════════════════════════════════════════════════════
     if (phase === 'game_over') {
         return (
-            <div className="flex flex-col items-center justify-center min-h-screen text-center p-6">
+            <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
                 <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.5 }}>
-                    <div className="text-[120px] leading-none mb-4">🔥</div>
+                    <div className="text-[80px] sm:text-[120px] leading-none mb-4">🔥</div>
                     <h1 className="text-5xl md:text-6xl font-black text-brand-pink mb-3">YANDI!</h1>
                     <p className="text-xl text-white/50 mb-8">Sabotajcı kazandı — Anlatıcı yasaklı kelimeyi söyledi!</p>
 
@@ -333,7 +333,7 @@ export const Lobby = () => {
                             </div>
                         </NeonCard>
                     )}
-                    <div className="flex gap-3 flex-wrap justify-center">
+                    <div className="flex gap-3 flex-col sm:flex-row justify-center w-full max-w-sm">
                         {isHost && (
                             <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
                                 <Button size="xl" className="px-12 py-5 text-xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
@@ -357,7 +357,7 @@ export const Lobby = () => {
     // ══════════════════════════════════════════════════════════════════════
     if (phase === 'sabotage_input' && myRole === 'saboteur') {
         return (
-            <div className="flex flex-col items-center justify-center min-h-screen p-6">
+            <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                 <SabotageInputPhase roomCode={roomCode!} roundId={roundId} targetWord={targetWord || '?'} />
                 <NavButtons />
                 <ToastOverlay />
@@ -366,7 +366,7 @@ export const Lobby = () => {
     }
     if (phase === 'sabotage_input') {
         return (
-            <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
+            <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                 <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
                     <div className="text-6xl mb-4">🤫</div>
                     <NeonCard className="max-w-md">
@@ -390,15 +390,15 @@ export const Lobby = () => {
         if (myRole === 'narrator') {
             if (!endTime) {
                 return (
-                    <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
+                    <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
                             <div className="text-6xl mb-4">⏱️</div>
                             <h2 className="text-3xl font-black text-brand-cyan uppercase tracking-widest mb-2">Süre Seç</h2>
                             <p className="text-white/40 text-sm mb-8">Bu tur için ne kadar süren olsun?</p>
-                            <div className="flex gap-3 flex-wrap justify-center">
+                            <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs sm:max-w-none sm:flex-wrap sm:justify-center">
                                 {[{ l: '1 dk', s: 60 }, { l: '1.5 dk', s: 90 }, { l: '2 dk', s: 120 }].map(opt => (
-                                    <motion.div key={opt.s} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                                        <Button size="xl" className="px-10 py-5 text-xl"
+                                    <motion.div key={opt.s} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="w-full sm:w-auto">
+                                        <Button size="xl" className="w-full sm:w-auto px-10 py-5 text-xl"
                                             onClick={() => socket?.emit('set_timer', { roomCode, durationSeconds: opt.s })}>
                                             {opt.l}
                                         </Button>
@@ -414,12 +414,12 @@ export const Lobby = () => {
                 <>
                     <TimerBar />
                     <MiniScoreboard />
-                    <div className="flex flex-col items-center justify-center min-h-screen text-center px-4 pt-16">
+                    <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center px-4 pt-[calc(4rem+env(safe-area-inset-top))] pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                         <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
                             <p className="text-base text-brand-cyan font-bold uppercase tracking-[0.3em] mb-4">📢 Sen Anlatıcısın</p>
-                            <NeonCard className="py-10 px-8 mb-6">
+                            <NeonCard className="py-8 px-6 mb-6 w-full max-w-sm mx-auto">
                                 <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">🎯 Hedef Kelime</p>
-                                <h1 className="text-5xl md:text-7xl font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-white to-white/60">
+                                <h1 className="text-[clamp(2.5rem,10vw,5rem)] font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-white to-white/60">
                                     {targetWord}
                                 </h1>
                             </NeonCard>
@@ -441,14 +441,14 @@ export const Lobby = () => {
                 <>
                     <TimerBar />
                     <MiniScoreboard />
-                    <div className="flex flex-col items-center justify-center min-h-[85vh] text-center p-6 pt-20">
+                    <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pt-[calc(5rem+env(safe-area-inset-top))] pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
                             <div className="text-5xl mb-3">🕵️</div>
                             <h2 className="text-2xl font-black text-brand-pink uppercase tracking-widest mb-2">Sabotajcı</h2>
                             <p className="text-white/40 text-xs mb-1">Hedef: <span className="text-brand-pink font-bold">{targetWord}</span></p>
                             <p className="text-white/30 text-xs mb-6">Anlatıcı yasaklı kelimelerden birini söylerse tıklayıp YANDI de!</p>
 
-                            <div className="flex flex-wrap gap-3 justify-center mb-6 max-w-md">
+                            <div className="flex flex-wrap gap-3 justify-center mb-6 w-full max-w-xs sm:max-w-md">
                                 {saboteurWords.length > 0 ? saboteurWords.map((w, i) => (
                                     <motion.button key={i} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                                         onClick={() => setSelectedWord(w === selectedWord ? null : w)}
@@ -488,7 +488,7 @@ export const Lobby = () => {
             <>
                 <TimerBar />
                 <MiniScoreboard />
-                <div className="flex flex-col items-center justify-center min-h-[85vh] text-center p-6 pt-20 w-full max-w-md mx-auto">
+                <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pt-[calc(5rem+env(safe-area-inset-top))] pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))] w-full max-w-md mx-auto">
                     <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full">
                         <div className="text-5xl mb-3">🔍</div>
                         <h2 className="text-2xl font-black text-brand-cyan uppercase tracking-widest mb-3">Tahminci</h2>
@@ -566,7 +566,7 @@ export const Lobby = () => {
 
             <div className="w-full max-w-5xl grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-12 mt-8">
                 {/* Player list with scores */}
-                <NeonCard className="md:col-span-7 flex flex-col h-full min-h-[400px]">
+                <NeonCard className="md:col-span-7 flex flex-col h-full">
                     <div className="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
                         <div className="flex items-center gap-3 text-brand-cyan">
                             <Users className="w-5 h-5" />
