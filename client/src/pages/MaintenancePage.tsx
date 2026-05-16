@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { Cog, Zap, Shield, Cpu, Wifi } from 'lucide-react';
 
 // ─── Change this date to set the countdown target ───────────────────────────
-const LAUNCH_DATE = new Date('2026-07-01T00:00:00');
+const LAUNCH_DATE = new Date('2026-05-17T00:00:00');
 
 function useCountdown(target: Date) {
     const calc = () => {
