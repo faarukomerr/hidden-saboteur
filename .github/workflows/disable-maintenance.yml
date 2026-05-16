@@ -1,0 +1,30 @@
+name: Disable Maintenance Mode
+
+on:
+  schedule:
+    # 21:00 UTC = 00:00 Turkey (UTC+3)
+    - cron: '0 21 16 5 *'
+  workflow_dispatch: # Manuel tetikleme için de açık bırak
+
+permissions:
+  contents: write
+
+jobs:
+  disable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Disable maintenance mode & deploy
+        run: |
+          if grep -q "MAINTENANCE_MODE = true" client/src/config/maintenance.ts; then
+            sed -i 's/MAINTENANCE_MODE = true/MAINTENANCE_MODE = false/' client/src/config/maintenance.ts
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add client/src/config/maintenance.ts
+            git commit -m "chore: auto-disable maintenance mode [scheduled]"
+            git push
+            echo "✅ Maintenance kapatıldı, Vercel deploy başlıyor!"
+          else
+            echo "ℹ️ Maintenance zaten kapalı, bir şey yapılmadı."
+          fi
