@@ -2,8 +2,8 @@ name: Disable Maintenance Mode
 
 on:
   schedule:
-    # 21:00 UTC = 00:00 Turkey (UTC+3)
-    - cron: '0 21 16 5 *'
+    # 23:00 UTC = 00:00 UK (BST = UTC+1)
+    - cron: '0 23 16 5 *'
   workflow_dispatch: # Manuel tetikleme için de açık bırak
 
 permissions:
