@@ -18,8 +18,8 @@ export const Input = React.forwardRef<HTMLInputElement, InputProps>(
                 <input
                     ref={ref}
                     className={cn(
-                        "w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-white placeholder:text-white/30",
-                        "focus:outline-none focus:border-brand-cyan/50 focus:bg-white/5 focus:ring-4 focus:ring-brand-cyan/10 transition-all text-base min-h-[48px] shadow-inner",
+                        "w-full bg-black/20 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 text-white placeholder:text-white/30",
+                        "focus:outline-none focus:border-brand-cyan/50 focus:bg-white/10 focus:ring-4 focus:ring-brand-cyan/20 transition-all text-base min-h-[48px] shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] backdrop-blur-xl",
                         error && "border-brand-pink focus:border-brand-pink focus:ring-brand-pink/20",
                         className
                     )}

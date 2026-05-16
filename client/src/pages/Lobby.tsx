@@ -567,25 +567,25 @@ export const Lobby = () => {
                         <h2 className="text-lg font-bold uppercase tracking-wider">{t('players')}</h2>
                         <span className="bg-brand-cyan/15 text-brand-cyan px-3 py-1 rounded-full text-xs font-bold">{players.length}/8</span>
                     </div>
-                    <div className="space-y-2">
+                    <motion.div className="space-y-2" variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } }} initial="hidden" animate="show">
                         <AnimatePresence>
                             {players.map((p, idx) => {
                                 const sc = scores.find(s => s.name === p.name);
                                 const pts = sc ? sc.points : 0;
                                 return (
-                                    <motion.div key={p.name + idx} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
-                                        className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl px-4 py-3 hover:border-brand-cyan/20 transition-colors">
+                                    <motion.div key={p.name + idx} variants={{ hidden: { opacity: 0, y: 20, scale: 0.95 }, show: { opacity: 1, y: 0, scale: 1 } }} exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+                                        className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl px-4 py-3 hover:border-brand-cyan/30 transition-all hover:bg-white/5 backdrop-blur-md">
                                         <span className="font-semibold text-sm">
                                             {p.name}
-                                            {p.name === username && <span className="text-brand-cyan ml-1.5 text-xs">{t('you')}</span>}
+                                            {p.name === username && <span className="text-brand-cyan ml-1.5 text-xs px-2 py-0.5 bg-brand-cyan/10 rounded-md">{t('you')}</span>}
                                         </span>
-                                        <span className="text-brand-cyan font-mono font-bold text-sm">{pts} pt</span>
+                                        <span className="text-brand-cyan font-mono font-bold text-sm bg-brand-cyan/5 px-2 py-1 rounded-md">{pts} pt</span>
                                     </motion.div>
                                 );
                             })}
                         </AnimatePresence>
                         {players.length === 0 && <p className="p-6 text-center text-white/20 italic text-sm">{t('waitingPlayers')}</p>}
-                    </div>
+                    </motion.div>
                 </NeonCard>
 
                 <div className="flex flex-col gap-5">
@@ -594,8 +594,8 @@ export const Lobby = () => {
                             <h3 className="text-sm font-bold text-brand-cyan uppercase tracking-widest">⚙️ Oyun Ayarları</h3>
 
                             <div>
-                                <label className="text-xs text-white/50 mb-1 block">Kelime Kategorisi</label>
-                                <select className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50 text-white"
+                                <label className="text-[11px] text-white/50 mb-1.5 block font-bold uppercase tracking-widest">Kelime Kategorisi</label>
+                                <select className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:border-brand-cyan/50 focus:ring-2 focus:ring-brand-cyan/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/5 shadow-inner"
                                     value={category} onChange={e => setCategory(e.target.value)}>
                                     <option value="Rastgele">🎲 Rastgele (Karışık)</option>
                                     <option value="Animals & Nature">🦁 Hayvanlar ve Doğa</option>
@@ -607,8 +607,8 @@ export const Lobby = () => {
                             </div>
 
                             <div>
-                                <label className="text-xs text-white/50 mb-1 block">Hedef Skor (Kazanma Sınırı)</label>
-                                <select className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50 text-white"
+                                <label className="text-[11px] text-white/50 mb-1.5 block font-bold uppercase tracking-widest">Hedef Skor (Kazanma Sınırı)</label>
+                                <select className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:border-brand-cyan/50 focus:ring-2 focus:ring-brand-cyan/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/5 shadow-inner"
                                     value={targetScore || 'Endless'} onChange={e => setTargetScore(e.target.value === 'Endless' ? null : Number(e.target.value))}>
                                     <option value="Endless">♾️ Sonsuz Döngü (Limit Yok)</option>
                                     <option value="50">🏆 50 Puan</option>

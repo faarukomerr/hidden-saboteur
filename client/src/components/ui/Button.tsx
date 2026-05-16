@@ -13,9 +13,9 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     ({ className, variant = 'primary', size = 'md', isLoading, children, ...props }, ref) => {
 
         const variants = {
-            primary: "bg-brand-cyan text-brand-dark hover:bg-cyan-300 shadow-[0_0_20px_rgba(0,240,255,0.4)] border border-white/20",
-            secondary: "bg-white/10 text-white hover:bg-white/20 border border-white/10 backdrop-blur-md",
-            danger: "bg-brand-pink text-white hover:bg-pink-500 shadow-[0_0_20px_rgba(255,0,85,0.4)] border border-white/20",
+            primary: "bg-gradient-to-br from-brand-cyan to-blue-500 text-brand-dark hover:from-cyan-300 hover:to-blue-400 shadow-[0_10px_30px_rgba(0,240,255,0.5),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-white/20",
+            secondary: "bg-black/20 text-white hover:bg-white/10 border-t-white/20 border-l-white/10 border-white/5 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)]",
+            danger: "bg-gradient-to-br from-brand-pink to-red-600 text-white hover:from-pink-500 hover:to-red-500 shadow-[0_10px_30px_rgba(255,0,85,0.5),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-white/20",
             ghost: "bg-transparent text-white/70 hover:text-white hover:bg-white/10"
         };
 
@@ -29,10 +29,11 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         return (
             <motion.button
                 ref={ref}
-                whileHover={{ scale: props.disabled ? 1 : 1.02 }}
-                whileTap={{ scale: props.disabled ? 1 : 0.95 }}
+                whileHover={{ scale: props.disabled ? 1 : 1.05, y: -2 }}
+                whileTap={{ scale: props.disabled ? 1 : 0.95, y: 0 }}
+                transition={{ type: "spring", stiffness: 400, damping: 17 }}
                 className={cn(
-                    "inline-flex items-center justify-center rounded-xl transition-colors focus:outline-none focus:ring-2 focus:ring-brand-cyan/50 disabled:opacity-50 disabled:cursor-not-allowed",
+                    "inline-flex items-center justify-center rounded-2xl transition-colors focus:outline-none focus:ring-2 focus:ring-brand-cyan/50 disabled:opacity-50 disabled:cursor-not-allowed",
                     variants[variant],
                     sizes[size],
                     className
