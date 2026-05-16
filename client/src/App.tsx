@@ -4,10 +4,16 @@ import { SocketProvider } from './lib/SocketContext';
 import { LanguageProvider } from './lib/i18n';
 import { Home } from './pages/Home';
 import { Lobby } from './pages/Lobby';
+import { MaintenancePage } from './pages/MaintenancePage';
+import { MAINTENANCE_MODE } from './config/maintenance';
 
 import { CustomCursor } from './components/ui/CustomCursor';
 
 function App() {
+    if (MAINTENANCE_MODE) {
+        return <MaintenancePage />;
+    }
+
     return (
         <LanguageProvider>
             <SocketProvider>
