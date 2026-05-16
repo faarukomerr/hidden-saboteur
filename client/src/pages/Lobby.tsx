@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useSocket } from '../lib/SocketContext';
@@ -6,16 +6,45 @@ import { NeonCard } from '../components/ui/NeonCard';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { SabotageInputPhase } from '../components/game/SabotageInputPhase';
+import { RoleReveal } from '../components/game/RoleReveal';
+import { YandiOverlay } from '../components/game/YandiOverlay';
+import { CircularTimer } from '../components/ui/CircularTimer';
+import { ScorePopup } from '../components/ui/ScorePopup';
 import { useLanguage } from '../lib/i18n';
 import { LanguageToggle } from '../components/ui/LanguageToggle';
+import { TextReveal } from '../components/ui/TextReveal';
 import confetti from 'canvas-confetti';
 import { playSound } from '../lib/utils';
-import { Trophy, Settings, Users, Gamepad2, ArrowLeft, RotateCcw, Home, Clock, AlertCircle } from 'lucide-react';
-import { TextReveal } from '../components/ui/TextReveal';
+import {
+    Trophy, Settings, Users, Gamepad2, ArrowLeft, RotateCcw,
+    Home, Clock, AlertCircle, Cog, Star, Zap,
+} from 'lucide-react';
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 interface Player { id: string; name: string; score: number; }
 interface ScoreEntry { name: string; socketId: string; points: number; }
+interface ScorePopupItem { id: string; points: number; }
+type GamePhase = 'lobby' | 'sabotage_input' | 'narration' | 'round_summary' | 'game_over' | 'grand_winner';
 
+// ─── Per-player color palette ─────────────────────────────────────────────────
+const COLORS = [
+    { main: '#00F0FF', bg: 'rgba(0,240,255,0.08)', border: 'rgba(0,240,255,0.22)' },
+    { main: '#FF0055', bg: 'rgba(255,0,85,0.08)',  border: 'rgba(255,0,85,0.22)' },
+    { main: '#8B5CF6', bg: 'rgba(139,92,246,0.08)', border: 'rgba(139,92,246,0.22)' },
+    { main: '#F59E0B', bg: 'rgba(245,158,11,0.08)', border: 'rgba(245,158,11,0.22)' },
+    { main: '#34D399', bg: 'rgba(52,211,153,0.08)', border: 'rgba(52,211,153,0.22)' },
+    { main: '#F97316', bg: 'rgba(249,115,22,0.08)', border: 'rgba(249,115,22,0.22)' },
+    { main: '#EC4899', bg: 'rgba(236,72,153,0.08)', border: 'rgba(236,72,153,0.22)' },
+    { main: '#6366F1', bg: 'rgba(99,102,241,0.08)', border: 'rgba(99,102,241,0.22)' },
+];
+
+function playerColor(name: string) {
+    let h = 0;
+    for (let i = 0; i < name.length; i++) { h = (h << 5) - h + name.charCodeAt(i); h |= 0; }
+    return COLORS[Math.abs(h) % COLORS.length];
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
 export const Lobby = () => {
     const { id: roomCode } = useParams<{ id: string }>();
     const [searchParams] = useSearchParams();
@@ -23,48 +52,62 @@ export const Lobby = () => {
     const { socket, isConnected } = useSocket();
     const username = searchParams.get('user');
     const isHost = searchParams.get('host') === 'true';
+    const { t, language } = useLanguage();
 
+    // Game state
     const [players, setPlayers] = useState<Player[]>([]);
-    const [phase, setPhase] = useState<'lobby' | 'sabotage_input' | 'narration' | 'round_summary' | 'game_over' | 'grand_winner'>('lobby');
-    const [myRole, setMyRole] = useState<'narrator' | 'guesser' | 'saboteur' | null>(null);
+    const [phase, setPhase] = useState<GamePhase>('lobby');
+    const [myRole, setMyRole] = useState<'narrator' | 'saboteur' | 'guesser' | null>(null);
     const [targetScore, setTargetScore] = useState<number | null>(50);
-    const [category, setCategory] = useState<string>('Rastgele');
+    const [category, setCategory] = useState('Rastgele');
     const [grandWinnerData, setGrandWinnerData] = useState<any>(null);
     const [targetWord, setTargetWord] = useState<string | null>(null);
     const [roundId, setRoundId] = useState('');
-    const { t, language } = useLanguage();
-
-    // Timer — server is source of truth
     const [timeLeft, setTimeLeft] = useState(0);
     const [endTime, setEndTime] = useState<number | null>(null);
-
-    // Saboteur clickable words
+    const [totalTime, setTotalTime] = useState(120);
     const [saboteurWords, setSaboteurWords] = useState<string[]>([]);
     const [selectedWord, setSelectedWord] = useState<string | null>(null);
-
-    // Guesser
     const [guessesLeft, setGuessesLeft] = useState(3);
     const [guessInput, setGuessInput] = useState('');
-
-    // Events
     const [toast, setToast] = useState<{ type: string; msg: string } | null>(null);
     const [commentary, setCommentary] = useState<string | null>(null);
-
-    // Scores — persist until new game
     const [scores, setScores] = useState<ScoreEntry[]>([]);
-
-    // Round summary data
     const [summaryData, setSummaryData] = useState<{ targetWord: string; winnerName: string; reason: string } | null>(null);
 
+    // Overlay state
+    const [roleRevealData, setRoleRevealData] = useState<{ role: 'narrator' | 'saboteur' | 'guesser'; targetWord: string | null } | null>(null);
+    const [yandiData, setYandiData] = useState<{ word: string } | null>(null);
+    const [scorePopups, setScorePopups] = useState<ScorePopupItem[]>([]);
+    const [displayScore, setDisplayScore] = useState(0);
+    const prevScoresRef = useRef<ScoreEntry[]>([]);
+
+    // ─── Grand winner score counter ───────────────────────────────────────────
+    useEffect(() => {
+        if (phase !== 'grand_winner' || !grandWinnerData) return;
+        setDisplayScore(0);
+        const target = grandWinnerData.score as number;
+        const step = Math.max(1, Math.ceil(target / 55));
+        const id = setInterval(() => {
+            setDisplayScore(prev => {
+                const next = prev + step;
+                if (next >= target) { clearInterval(id); return target; }
+                return next;
+            });
+        }, 22);
+        return () => clearInterval(id);
+    }, [phase, grandWinnerData]);
+
+    // ─── Round reset ──────────────────────────────────────────────────────────
     const resetRoundState = () => {
         setMyRole(null); setTargetWord(null); setRoundId('');
-        setTimeLeft(0); setEndTime(null);
+        setTimeLeft(0); setEndTime(null); setTotalTime(120);
         setSaboteurWords([]); setSelectedWord(null);
         setGuessesLeft(3); setGuessInput('');
         setToast(null); setCommentary(null);
-        // NOTE: scores are NOT reset here — they persist
     };
 
+    // ─── Socket handlers ──────────────────────────────────────────────────────
     useEffect(() => {
         if (!socket || !roomCode || !username) { navigate('/'); return; }
         if (isConnected) socket.emit('join_room', { roomCode, username });
@@ -76,6 +119,7 @@ export const Lobby = () => {
             setMyRole(d.role);
             setTargetWord(d.targetWord || null);
             setRoundId(d.roundId || '');
+            setRoleRevealData({ role: d.role, targetWord: d.targetWord || null });
         });
 
         socket.on('phase_changed', (d: { phase: any }) => setPhase(d.phase));
@@ -83,42 +127,58 @@ export const Lobby = () => {
         socket.on('saboteur_words_list', (d: { words: string[] }) => setSaboteurWords(d.words));
         socket.on('sabotage_words_saved', (d: { words: string[] }) => setSaboteurWords(d.words || []));
 
-        socket.on('timer_start', (d: { endTime: number }) => {
+        socket.on('timer_start', (d: { endTime: number; total?: number }) => {
             setEndTime(d.endTime);
+            if (d.total) setTotalTime(d.total);
         });
 
-        socket.on('scores_update', (d: { scores: ScoreEntry[] }) => setScores(d.scores));
+        socket.on('scores_update', (d: { scores: ScoreEntry[] }) => {
+            const prev = prevScoresRef.current;
+            d.scores.forEach(ns => {
+                const ps = prev.find(s => s.socketId === ns.socketId);
+                const diff = ns.points - (ps?.points ?? 0);
+                if (diff > 0 && ns.name === username) {
+                    setScorePopups(p => [...p, { id: `${Date.now()}-${Math.random()}`, points: diff }]);
+                }
+            });
+            prevScoresRef.current = d.scores;
+            setScores(d.scores);
+        });
 
         socket.on('sabotage_confirmed', (d: { word: string }) => {
             playSound('buzzer');
-            showToast('sabotage', `🔥 YANDI! "${d.word}" yakalandı!`, 4000);
+            setYandiData({ word: d.word });
         });
 
         socket.on('grand_winner', (d: any) => {
             playSound('win');
-            confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 } });
+            confetti({ particleCount: 220, spread: 110, origin: { y: 0.5 } });
+            setTimeout(() => confetti({ particleCount: 90, spread: 55, origin: { x: 0.15, y: 0.65 } }), 350);
+            setTimeout(() => confetti({ particleCount: 90, spread: 55, origin: { x: 0.85, y: 0.65 } }), 650);
             setGrandWinnerData(d);
             setPhase('grand_winner');
         });
+
         socket.on('sabotage_failed', () => {
             showToast('wrong', '❌ Bu yasaklı kelimelerden biri değildi!', 3000);
         });
+
         socket.on('host_commentary', (d: { message: string }) => {
             setCommentary(d.message);
             setTimeout(() => setCommentary(null), 6000);
         });
+
         socket.on('guess_result', (d: { guessWord: string; guesserName: string }) => {
             showToast('wrong', `❌ ${d.guesserName}: "${d.guessWord}" yanlış`, 3000);
         });
 
-        // Round ended (correct guess or timeout) → show summary with Next Round button
         socket.on('round_summary', (d: { targetWord: string; winnerName: string; reason: string }) => {
             setSummaryData(d);
             setPhase('round_summary');
             setTimeLeft(0); setEndTime(null);
             if (d.reason === 'guess') {
                 playSound('ding');
-                confetti({ particleCount: 50, spread: 60 });
+                confetti({ particleCount: 70, spread: 65, origin: { y: 0.65 } });
             }
         });
 
@@ -127,344 +187,546 @@ export const Lobby = () => {
 
         return () => {
             ['room_state_update', 'role_assigned', 'phase_changed', 'saboteur_words_list',
-                'sabotage_words_saved', 'timer_start', 'scores_update', 'sabotage_confirmed',
-                'sabotage_failed', 'host_commentary', 'guess_result', 'round_summary',
-                'game_over', 'force_reset', 'grand_winner'
+             'sabotage_words_saved', 'timer_start', 'scores_update', 'sabotage_confirmed',
+             'sabotage_failed', 'host_commentary', 'guess_result', 'round_summary',
+             'game_over', 'force_reset', 'grand_winner',
             ].forEach(e => socket.off(e));
         };
     }, [socket, isConnected, roomCode, username, navigate]);
+
+    // ─── Timer tick ───────────────────────────────────────────────────────────
+    useEffect(() => {
+        if (!endTime) { setTimeLeft(0); return; }
+        let frame: number;
+        const tick = () => {
+            const r = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+            setTimeLeft(r);
+            if (r > 0) frame = requestAnimationFrame(tick);
+        };
+        tick();
+        return () => cancelAnimationFrame(frame);
+    }, [endTime]);
 
     const showToast = (type: string, msg: string, ms: number) => {
         setToast({ type, msg }); setTimeout(() => setToast(null), ms);
     };
 
-    useEffect(() => {
-        if (!endTime) {
-            setTimeLeft(0);
-            return;
-        }
-        let frame: number;
-        const updateTimer = () => {
-            const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
-            setTimeLeft(remaining);
-            if (remaining > 0) frame = requestAnimationFrame(updateTimer);
-        };
-        updateTimer();
-        return () => cancelAnimationFrame(frame);
-    }, [endTime]);
+    // ─── Shared sub-components ────────────────────────────────────────────────
 
-    // ── Shared Components ────────────────────────────────────────────────
-    const TimerBar = () => {
+    const FloatingTimer = () => {
         if (!endTime || timeLeft <= 0) return null;
-        const m = Math.floor(timeLeft / 60);
-        const s = timeLeft % 60;
-        const urgent = timeLeft <= 10;
         return (
-            <div className={`fixed top-0 left-0 right-0 z-[60] flex items-center justify-center py-3 pt-[calc(0.75rem+env(safe-area-inset-top))] bg-black/90 backdrop-blur-xl border-b border-white/10 ${urgent ? 'border-brand-pink/50' : ''}`}>
-                <div className={`flex items-center gap-3 ${urgent ? 'animate-pulse' : ''}`}>
-                    <span className="text-lg">⏱️</span>
-                    <span className={`text-3xl font-black font-mono tracking-[0.2em] ${urgent ? 'text-brand-pink' : 'text-brand-cyan'}`}>
-                        {m}:{s.toString().padStart(2, '0')}
-                    </span>
+            <div className="fixed top-0 left-0 right-0 z-[60] flex justify-center pt-[calc(0.4rem+env(safe-area-inset-top))] pb-1.5 pointer-events-none">
+                <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-full px-5 py-1.5 shadow-2xl">
+                    <CircularTimer timeLeft={timeLeft} total={totalTime} />
                 </div>
             </div>
         );
     };
 
     const NavButtons = () => (
-        <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 flex gap-2 bg-black/60 backdrop-blur-3xl p-1.5 rounded-full border border-white/10 shadow-2xl w-max max-w-[95vw]">
-            <button onClick={() => socket?.emit('return_to_lobby', { roomCode })}
-                className="flex items-center gap-2 bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 md:px-6 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
-                <Home className="w-4 h-4" /> Lobiye Dön
-            </button>
-            <button onClick={() => socket?.emit('restart_round', { roomCode })}
-                className="flex items-center gap-2 bg-brand-pink/10 hover:bg-brand-pink/25 text-brand-pink px-4 md:px-6 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
-                <RotateCcw className="w-4 h-4" /> Yeniden Başlat
-            </button>
+        <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 flex gap-2 bg-black/75 backdrop-blur-3xl p-1.5 rounded-full border border-white/10 shadow-2xl">
+            <motion.button
+                whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                onClick={() => socket?.emit('return_to_lobby', { roomCode })}
+                className="flex items-center gap-2 bg-white/5 hover:bg-white/15 text-white/55 hover:text-white px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-white/5 transition-colors min-h-[44px]"
+            >
+                <Home className="w-3.5 h-3.5" /> Lobiye Dön
+            </motion.button>
+            <motion.button
+                whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                onClick={() => socket?.emit('restart_round', { roomCode })}
+                className="flex items-center gap-2 bg-brand-pink/10 hover:bg-brand-pink/20 text-brand-pink px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-wider border border-brand-pink/20 transition-colors min-h-[44px]"
+            >
+                <RotateCcw className="w-3.5 h-3.5" /> Yeniden Başlat
+            </motion.button>
         </div>
     );
 
     const MiniScoreboard = () => {
         if (scores.length === 0) return null;
         return (
-            <div className="fixed right-3 z-50 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl px-3 py-2.5 space-y-1 min-w-[130px] shadow-2xl" style={{ top: 'calc(3.5rem + env(safe-area-inset-top))' }}>
-                <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-1">🏆 Skor</p>
+            <motion.div
+                initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }}
+                className="fixed right-3 z-50 bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl p-3 min-w-[130px] shadow-2xl"
+                style={{ top: 'calc(4.8rem + env(safe-area-inset-top))' }}
+            >
+                <p className="text-[9px] text-white/25 font-black uppercase tracking-widest mb-2 flex items-center gap-1.5">
+                    <Trophy className="w-2.5 h-2.5" /> Skor
+                </p>
                 {scores.slice(0, 5).map((s, i) => (
-                    <div key={i} className="flex justify-between text-xs gap-3">
-                        <span className={`font-medium truncate ${s.name === username ? 'text-brand-cyan' : 'text-white/60'}`}>
-                            {i === 0 && '👑 '}{s.name}
+                    <div key={i} className="flex justify-between items-center gap-2 py-0.5">
+                        <span className={`text-[11px] font-medium truncate ${s.name === username ? 'text-brand-cyan' : 'text-white/45'}`}>
+                            {i === 0 ? '👑 ' : `${i + 1}. `}{s.name}
                         </span>
-                        <span className="text-brand-cyan font-mono font-bold">{s.points}</span>
+                        <span className="text-brand-cyan font-mono font-black text-[11px] shrink-0">{s.points}</span>
                     </div>
                 ))}
-            </div>
+            </motion.div>
         );
     };
 
     const ToastOverlay = () => (
         <AnimatePresence>
             {toast && (
-                <motion.div key="toast" initial={{ y: -80, opacity: 0, scale: 0.9 }} animate={{ y: 0, opacity: 1, scale: 1 }} exit={{ y: -80, opacity: 0, scale: 0.9 }}
-                    className={`fixed top-20 left-1/2 -translate-x-1/2 z-[70] px-6 py-4 rounded-2xl font-bold text-white text-center shadow-2xl border max-w-sm backdrop-blur-md
+                <motion.div key="toast"
+                    initial={{ y: -80, opacity: 0, scale: 0.88 }}
+                    animate={{ y: 0, opacity: 1, scale: 1 }}
+                    exit={{ y: -80, opacity: 0 }}
+                    className={`fixed top-24 left-1/2 -translate-x-1/2 z-[70] px-6 py-4 rounded-2xl font-bold text-white text-center shadow-2xl border max-w-sm backdrop-blur-md
                         ${toast.type === 'sabotage' ? 'bg-brand-pink/90 border-brand-pink' :
-                            toast.type === 'correct' ? 'bg-green-500/90 border-green-400' :
-                                'bg-red-600/90 border-red-500'}`}>
+                          toast.type === 'correct'  ? 'bg-green-500/90 border-green-400' :
+                                                      'bg-red-600/90 border-red-500'}`}
+                >
                     {toast.msg}
                 </motion.div>
             )}
             {commentary && (
-                <motion.div key="comm" initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
-                    className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[70] max-w-sm px-6 py-4 rounded-2xl bg-black/90 border border-brand-cyan/50 text-white text-center shadow-2xl backdrop-blur-md">
+                <motion.div key="comm"
+                    initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
+                    className="fixed bottom-28 left-1/2 -translate-x-1/2 z-[70] max-w-sm px-6 py-4 rounded-2xl bg-black/90 border border-brand-cyan/50 text-white text-center shadow-2xl backdrop-blur-md"
+                >
                     🎙️ {commentary}
                 </motion.div>
             )}
         </AnimatePresence>
     );
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ─── GRAND WINNER ───────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════
-    if (phase === 'grand_winner' && grandWinnerData) {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-6 bg-brand-cyan/5">
-                <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.4 }} className="max-w-xl w-full flex flex-col items-center">
-                    <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="mb-4">
-                        <Trophy className="w-24 h-24 md:w-32 md:h-32 text-brand-cyan drop-shadow-[0_0_30px_rgba(0,240,255,0.6)]" />
+    const AnimatedDots = () => (
+        <div className="flex gap-1.5 justify-center mt-3">
+            {[0, 1, 2].map(i => (
+                <motion.div key={i} className="w-1.5 h-1.5 rounded-full bg-brand-cyan/40"
+                    animate={{ opacity: [0.2, 1, 0.2], scale: [0.8, 1.2, 0.8] }}
+                    transition={{ duration: 1.2, delay: i * 0.3, repeat: Infinity }}
+                />
+            ))}
+        </div>
+    );
+
+    // ─── Phase views ──────────────────────────────────────────────────────────
+
+    const renderContent = () => {
+
+        // ── GRAND WINNER ─────────────────────────────────────────────────────
+        if (phase === 'grand_winner' && grandWinnerData) {
+            const stars = Array.from({ length: 14 }, (_, i) => ({
+                left: `${(i * 43 + 7) % 92}%`,
+                top: `${(i * 61 + 9) % 85}%`,
+                delay: i * 0.18,
+                dur: 1.4 + (i % 4) * 0.4,
+            }));
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-6 relative overflow-hidden">
+                    {/* Stars */}
+                    {stars.map((s, i) => (
+                        <motion.div key={i} className="absolute pointer-events-none"
+                            style={{ left: s.left, top: s.top }}
+                            animate={{ opacity: [0, 0.7, 0], scale: [0.4, 1.6, 0.4] }}
+                            transition={{ duration: s.dur, delay: s.delay, repeat: Infinity }}>
+                            <Star className="w-3.5 h-3.5 text-brand-cyan/30" fill="currentColor" />
+                        </motion.div>
+                    ))}
+
+                    {/* Glow */}
+                    <div className="absolute inset-0 pointer-events-none"
+                        style={{ background: 'radial-gradient(ellipse at center, rgba(0,240,255,0.07) 0%, transparent 68%)' }} />
+
+                    <motion.div
+                        initial={{ scale: 0.65, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: 'spring', bounce: 0.4 }}
+                        className="max-w-sm w-full flex flex-col items-center relative z-10"
+                    >
+                        {/* Trophy */}
+                        <motion.div
+                            initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+                            transition={{ delay: 0.2, type: 'spring', bounce: 0.55 }}
+                            className="mb-5"
+                        >
+                            <motion.div animate={{ rotate: [0, -6, 6, -3, 0] }} transition={{ duration: 0.7, delay: 0.6 }}>
+                                <Trophy className="w-20 h-20 md:w-28 md:h-28 text-brand-cyan"
+                                    style={{ filter: 'drop-shadow(0 0 35px rgba(0,240,255,0.75))' }} />
+                            </motion.div>
+                        </motion.div>
+
+                        <TextReveal text="ŞAMPİYON"
+                            className="text-[clamp(2.2rem,8vw,4rem)] font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan to-brand-pink mb-3 uppercase tracking-tighter" />
+
+                        <motion.h2
+                            initial={{ opacity: 0, scale: 0.75 }} animate={{ opacity: 1, scale: 1 }}
+                            transition={{ delay: 0.65, type: 'spring', bounce: 0.3 }}
+                            className="text-3xl md:text-4xl text-white font-bold mb-8 tracking-wide"
+                        >
+                            {grandWinnerData.winnerName}
+                        </motion.h2>
+
+                        <motion.div
+                            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.85 }} className="mb-8 w-full"
+                        >
+                            <NeonCard variant="secondary">
+                                <p className="text-white/25 uppercase tracking-widest text-[9px] font-black mb-2">Final Skor</p>
+                                <p className="text-[clamp(3rem,11vw,5rem)] font-black font-mono text-brand-cyan tabular-nums"
+                                    style={{ textShadow: '0 0 35px rgba(0,240,255,0.65)' }}>
+                                    {displayScore}
+                                </p>
+                            </NeonCard>
+                        </motion.div>
+
+                        {isHost && (
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.1 }} className="w-full">
+                                <Button size="xl" className="w-full flex items-center justify-center gap-3"
+                                    onClick={() => socket?.emit('restart_round', { roomCode })}>
+                                    <RotateCcw className="w-5 h-5" /> Yeni Oyun Başlat
+                                </Button>
+                            </motion.div>
+                        )}
                     </motion.div>
-                    <TextReveal text="ŞAMPİYON" className="text-[clamp(3rem,8vw,5rem)] font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan to-brand-pink mb-4 uppercase tracking-tighter" />
-                    <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6 }} className="text-4xl text-white font-bold mb-8">{grandWinnerData.winnerName}</motion.h2>
-                    <NeonCard className="mb-8">
-                        <p className="text-white/40 uppercase tracking-widest text-xs mb-2">Ulaşılan Skor</p>
-                        <p className="text-5xl font-mono font-bold text-brand-cyan">{grandWinnerData.score}</p>
-                    </NeonCard>
+                </div>
+            );
+        }
 
-                    {isHost && (
-                        <Button size="xl" className="w-full text-xl flex items-center justify-center gap-3 mt-4" onClick={() => socket?.emit('restart_round', { roomCode })}>
-                            <RotateCcw className="w-6 h-6" /> Yeni Oyun Başlat
-                        </Button>
-                    )}
-                </motion.div>
-                <NavButtons />
-            </div>
-        );
-    }
+        // ── ROUND SUMMARY ─────────────────────────────────────────────────────
+        if (phase === 'round_summary' && summaryData) {
+            const isTimeout = summaryData.reason === 'timeout';
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(7rem,calc(6rem+env(safe-area-inset-bottom)))]">
+                    <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: 'spring', bounce: 0.4 }}
+                        className="flex flex-col items-center w-full max-w-sm"
+                    >
+                        <motion.div className="mb-6"
+                            animate={!isTimeout ? { rotate: [0, -10, 10, -5, 0] } : {}}
+                            transition={{ delay: 0.3, duration: 0.5 }}>
+                            {isTimeout
+                                ? <Clock className="w-20 h-20 text-brand-pink" style={{ filter: 'drop-shadow(0 0 22px rgba(255,0,85,0.55))' }} />
+                                : <Trophy className="w-20 h-20 text-green-400" style={{ filter: 'drop-shadow(0 0 22px rgba(74,222,128,0.55))' }} />
+                            }
+                        </motion.div>
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ─── ROUND SUMMARY ──────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════
-    if (phase === 'round_summary' && summaryData) {
-        const isTimeout = summaryData.reason === 'timeout';
-        const isGuess = summaryData.reason === 'guess';
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.4 }} className="flex flex-col items-center">
-                    <div className="mb-6">
-                        {isGuess ? <Trophy className="w-20 h-20 text-green-400 drop-shadow-[0_0_20px_rgba(74,222,128,0.5)]" /> : <Clock className="w-20 h-20 text-brand-pink drop-shadow-[0_0_20px_rgba(255,0,85,0.5)]" />}
-                    </div>
-                    <h1 className="text-4xl md:text-5xl font-black mb-4">
-                        {isGuess ? (
-                            <TextReveal text={`${summaryData.winnerName} Doğru Bildi!`} className="text-green-400" />
-                        ) : (
-                            <TextReveal text="Süre Doldu!" className="text-brand-pink" />
-                        )}
-                    </h1>
-                    <p className="text-white/50 text-xl md:text-2xl mb-8 flex items-center justify-center gap-2">
-                        Kelime: <span className="text-white font-black tracking-widest">{summaryData.targetWord}</span>
-                    </p>
+                        <h1 className="text-3xl md:text-4xl font-black mb-4">
+                            {isTimeout
+                                ? <TextReveal text="Süre Doldu!" className="text-brand-pink" />
+                                : <TextReveal text={`${summaryData.winnerName} Kazandı!`} className="text-green-400" />
+                            }
+                        </h1>
 
-                    {/* Inline scoreboard */}
-                    {scores.length > 0 && (
-                        <NeonCard className="mb-8 max-w-sm mx-auto">
-                            <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-3">🏆 Skor Tablosu</p>
-                            <div className="space-y-2">
-                                {scores.map((s, i) => (
-                                    <div key={i} className={`flex justify-between items-center px-4 py-2.5 rounded-xl transition-colors
-                                        ${i === 0 ? 'bg-brand-cyan/15 border border-brand-cyan/20' :
-                                            s.name === username ? 'bg-white/5 border border-brand-cyan/10' : 'bg-white/[0.03]'}`}>
-                                        <span className="font-bold text-sm">{i === 0 ? '👑 ' : `${i + 1}. `}{s.name}</span>
-                                        <span className="text-brand-cyan font-mono font-bold">{s.points} pt</span>
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
+                            className="flex items-center gap-3 mb-8">
+                            <span className="text-white/40 text-base">Kelime:</span>
+                            <span className="text-white font-black text-2xl tracking-widest">{summaryData.targetWord}</span>
+                        </motion.div>
+
+                        {scores.length > 0 && (
+                            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.5 }} className="mb-8 w-full">
+                                <NeonCard>
+                                    <p className="text-[9px] text-white/25 font-black uppercase tracking-widest mb-4 flex items-center gap-1.5">
+                                        <Trophy className="w-3 h-3" /> Skor Tablosu
+                                    </p>
+                                    <div className="space-y-2">
+                                        {scores.map((s, i) => {
+                                            const col = playerColor(s.name);
+                                            return (
+                                                <div key={i}
+                                                    className="flex justify-between items-center px-4 py-2.5 rounded-xl"
+                                                    style={{
+                                                        background: i === 0 ? col.bg : s.name === username ? 'rgba(255,255,255,0.04)' : 'transparent',
+                                                        border: i === 0 ? `1px solid ${col.border}` : '1px solid transparent',
+                                                    }}>
+                                                    <span className="font-bold text-sm flex items-center gap-2">
+                                                        {i === 0 ? '👑 ' : `${i + 1}. `}
+                                                        <span style={{ color: i === 0 ? col.main : undefined }}>{s.name}</span>
+                                                        {s.name === username && <span className="text-[9px] text-white/25 uppercase tracking-wider">(sen)</span>}
+                                                    </span>
+                                                    <span className="font-mono font-black text-sm" style={{ color: col.main }}>{s.points} pt</span>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
-                                ))}
-                            </div>
-                        </NeonCard>
-                    )}
-
-                    <div className="flex gap-3 flex-col sm:flex-row justify-center w-full max-w-sm">
-                        {isHost && (
-                            <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-                                <Button size="xl" className="px-12 py-5 text-xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
-                                    onClick={() => socket?.emit('next_round', { roomCode })}>
-                                    ▶️ Sonraki Tur
-                                </Button>
+                                </NeonCard>
                             </motion.div>
                         )}
-                        <Button size="xl" variant="secondary" className="px-8 py-5 text-lg"
-                            onClick={() => socket?.emit('return_to_lobby', { roomCode })}>
-                            🏠 Lobiye Dön
-                        </Button>
-                    </div>
-                    {!isHost && <p className="text-white/30 text-sm mt-4 animate-pulse">Kurucunun sonraki turu başlatmasını bekleyin...</p>}
-                </motion.div>
-            </div>
-        );
-    }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ─── GAME OVER ───────────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════
-    if (phase === 'game_over') {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-                <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.5 }}>
-                    <div className="text-[80px] sm:text-[120px] leading-none mb-4">🔥</div>
-                    <h1 className="text-5xl md:text-6xl font-black text-brand-pink mb-3">YANDI!</h1>
-                    <p className="text-xl text-white/50 mb-8">Sabotajcı kazandı — Anlatıcı yasaklı kelimeyi söyledi!</p>
-
-                    {scores.length > 0 && (
-                        <NeonCard className="mb-8 max-w-sm mx-auto">
-                            <p className="text-[10px] text-white/30 font-bold uppercase tracking-widest mb-3">🏆 Final Skor</p>
-                            <div className="space-y-2">
-                                {scores.map((s, i) => (
-                                    <div key={i} className={`flex justify-between items-center px-4 py-2.5 rounded-xl ${i === 0 ? 'bg-brand-cyan/15 border border-brand-cyan/20' : 'bg-white/[0.03]'}`}>
-                                        <span className="font-bold text-sm">{i === 0 ? '👑 ' : `${i + 1}. `}{s.name}</span>
-                                        <span className="text-brand-cyan font-mono font-bold">{s.points} pt</span>
-                                    </div>
-                                ))}
-                            </div>
-                        </NeonCard>
-                    )}
-                    <div className="flex gap-3 flex-col sm:flex-row justify-center w-full max-w-sm">
-                        {isHost && (
-                            <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
-                                <Button size="xl" className="px-12 py-5 text-xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
+                        <div className="flex gap-3 flex-col sm:flex-row w-full">
+                            {isHost && (
+                                <Button size="xl" className="flex-1 flex items-center justify-center gap-2"
                                     onClick={() => socket?.emit('next_round', { roomCode })}>
-                                    ▶️ Yeni Tur
+                                    <Zap className="w-5 h-5" /> Sonraki Tur
                                 </Button>
+                            )}
+                            <Button size="xl" variant="secondary" className="flex-1 flex items-center justify-center gap-2"
+                                onClick={() => socket?.emit('return_to_lobby', { roomCode })}>
+                                <Home className="w-5 h-5" /> Lobiye Dön
+                            </Button>
+                        </div>
+                        {!isHost && (
+                            <p className="text-white/25 text-xs mt-4 animate-pulse">
+                                Kurucunun sonraki turu başlatmasını bekleyin...
+                            </p>
+                        )}
+                    </motion.div>
+                </div>
+            );
+        }
+
+        // ── GAME OVER ─────────────────────────────────────────────────────────
+        if (phase === 'game_over') {
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(7rem,calc(6rem+env(safe-area-inset-bottom)))] relative overflow-hidden">
+                    <div className="absolute inset-0 pointer-events-none"
+                        style={{ background: 'radial-gradient(ellipse at 50% 60%, rgba(255,0,85,0.1) 0%, transparent 65%)' }} />
+
+                    <motion.div initial={{ scale: 0.55, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        transition={{ type: 'spring', bounce: 0.45 }}
+                        className="flex flex-col items-center max-w-sm w-full relative z-10">
+
+                        <motion.div className="text-[80px] md:text-[100px] leading-none mb-3 select-none"
+                            animate={{ scale: [1, 1.06, 1], rotate: [0, 3, -3, 0] }}
+                            transition={{ duration: 1.8, repeat: Infinity }}>
+                            🔥
+                        </motion.div>
+
+                        <h1 className="text-[clamp(3rem,14vw,6rem)] font-black italic text-brand-pink mb-3"
+                            style={{ textShadow: '0 0 70px rgba(255,0,85,0.65)' }}>
+                            YANDI!
+                        </h1>
+                        <p className="text-white/35 text-sm mb-8">Sabotajcı kazandı — anlatıcı tuzağa düştü!</p>
+
+                        {scores.length > 0 && (
+                            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: 0.35 }} className="mb-8 w-full">
+                                <NeonCard variant="danger">
+                                    <p className="text-[9px] text-white/25 font-black uppercase tracking-widest mb-4">Final Skor</p>
+                                    <div className="space-y-2">
+                                        {scores.map((s, i) => (
+                                            <div key={i}
+                                                className="flex justify-between items-center px-4 py-2.5 rounded-xl"
+                                                style={{
+                                                    background: i === 0 ? 'rgba(255,0,85,0.1)' : 'transparent',
+                                                    border: i === 0 ? '1px solid rgba(255,0,85,0.3)' : '1px solid transparent',
+                                                }}>
+                                                <span className="font-bold text-sm">{i === 0 ? '💀 ' : `${i + 1}. `}{s.name}</span>
+                                                <span className="text-brand-pink font-mono font-black text-sm">{s.points}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </NeonCard>
                             </motion.div>
                         )}
-                        <Button size="xl" variant="secondary" className="px-8 py-5 text-lg"
-                            onClick={() => socket?.emit('return_to_lobby', { roomCode })}>
-                            🏠 Lobiye Dön
-                        </Button>
+
+                        <div className="flex gap-3 flex-col sm:flex-row w-full">
+                            {isHost && (
+                                <Button size="xl" className="flex-1 flex items-center justify-center gap-2"
+                                    onClick={() => socket?.emit('next_round', { roomCode })}>
+                                    <Zap className="w-5 h-5" /> Yeni Tur
+                                </Button>
+                            )}
+                            <Button size="xl" variant="secondary" className="flex-1 flex items-center justify-center gap-2"
+                                onClick={() => socket?.emit('return_to_lobby', { roomCode })}>
+                                <Home className="w-5 h-5" /> Lobiye Dön
+                            </Button>
+                        </div>
+                    </motion.div>
+                </div>
+            );
+        }
+
+        // ── SABOTAGE INPUT ────────────────────────────────────────────────────
+        if (phase === 'sabotage_input') {
+            if (myRole === 'saboteur') {
+                return (
+                    <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
+                        <SabotageInputPhase roomCode={roomCode!} roundId={roundId} targetWord={targetWord || '?'} />
+                        <NavButtons />
+                        <ToastOverlay />
                     </div>
-                </motion.div>
-            </div>
-        );
-    }
+                );
+            }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ─── SABOTAGE INPUT ──────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════
-    if (phase === 'sabotage_input' && myRole === 'saboteur') {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
-                <SabotageInputPhase roomCode={roomCode!} roundId={roundId} targetWord={targetWord || '?'} />
-                <NavButtons />
-                <ToastOverlay />
-            </div>
-        );
-    }
-    if (phase === 'sabotage_input') {
-        return (
-            <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
-                <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-                    <div className="text-6xl mb-4">🤫</div>
-                    <NeonCard className="max-w-md">
-                        <p className="text-xl text-brand-cyan font-bold tracking-widest uppercase mb-2 animate-pulse">{t('saboteursSettingTraps')}</p>
-                        <p className="text-white/50">{t('getReady')}</p>
-                        {myRole === 'narrator' && <p className="mt-3 text-brand-pink text-sm font-bold">Rolün: 📢 Anlatıcı</p>}
-                        {myRole === 'guesser' && <p className="mt-3 text-brand-cyan text-sm font-bold">Rolün: 🔍 Tahminci</p>}
-                    </NeonCard>
-                </motion.div>
-                <NavButtons />
-                <ToastOverlay />
-            </div>
-        );
-    }
+            // Narrator / guesser waiting screen
+            const isNarrator = myRole === 'narrator';
+            const badgeColor = isNarrator ? '#00F0FF' : '#8B5CF6';
+            const badgeBg = isNarrator ? 'rgba(0,240,255,0.08)' : 'rgba(139,92,246,0.08)';
+            const badgeBorder = isNarrator ? 'rgba(0,240,255,0.22)' : 'rgba(139,92,246,0.22)';
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ─── NARRATION ───────────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════
-    if (phase === 'narration') {
-        // ── Narrator: timer select then describe ─────────────────────────
-        if (myRole === 'narrator') {
-            if (!endTime) {
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
+                    <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        className="flex flex-col items-center">
+                        {/* Animated gears */}
+                        <div className="relative w-32 h-32 mb-8">
+                            <motion.div animate={{ rotate: 360 }} transition={{ duration: 11, repeat: Infinity, ease: 'linear' }}
+                                style={{ filter: 'drop-shadow(0 0 14px rgba(0,240,255,0.35))' }}>
+                                <Cog className="w-32 h-32 text-brand-cyan/20" strokeWidth={1.2} />
+                            </motion.div>
+                            <div className="absolute -top-2 -right-3">
+                                <motion.div animate={{ rotate: -360 }} transition={{ duration: 6, repeat: Infinity, ease: 'linear' }}>
+                                    <Cog className="w-12 h-12 text-brand-pink/25" strokeWidth={1.5} />
+                                </motion.div>
+                            </div>
+                            <div className="absolute -bottom-1 -left-3">
+                                <motion.div animate={{ rotate: 360 }} transition={{ duration: 4.5, repeat: Infinity, ease: 'linear' }}>
+                                    <Cog className="w-8 h-8 text-brand-cyan/15" strokeWidth={1.5} />
+                                </motion.div>
+                            </div>
+                        </div>
+
+                        <motion.div
+                            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border mb-8 text-[11px] font-black uppercase tracking-widest"
+                            style={{ background: badgeBg, borderColor: badgeBorder, color: badgeColor }}
+                            initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}
+                        >
+                            {isNarrator ? '📢 Anlatıcı' : '🔍 Tahminci'}
+                        </motion.div>
+
+                        <NeonCard className="max-w-xs w-full text-center">
+                            <p className="text-brand-cyan font-black tracking-widest uppercase text-sm mb-1">
+                                Sabotajcılar Tuzak Kuruyor
+                            </p>
+                            <AnimatedDots />
+                            <p className="text-white/25 text-xs mt-4">Hazır ol — tur yakında başlıyor!</p>
+                        </NeonCard>
+                    </motion.div>
+                    <NavButtons />
+                    <ToastOverlay />
+                </div>
+            );
+        }
+
+        // ── NARRATION ─────────────────────────────────────────────────────────
+        if (phase === 'narration') {
+
+            // Narrator — timer select
+            if (myRole === 'narrator' && !endTime) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
-                        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-                            <div className="text-6xl mb-4">⏱️</div>
-                            <h2 className="text-3xl font-black text-brand-cyan uppercase tracking-widest mb-2">Süre Seç</h2>
-                            <p className="text-white/40 text-sm mb-8">Bu tur için ne kadar süren olsun?</p>
-                            <div className="flex flex-col sm:flex-row gap-3 w-full max-w-xs sm:max-w-none sm:flex-wrap sm:justify-center">
-                                {[{ l: '1 dk', s: 60 }, { l: '1.5 dk', s: 90 }, { l: '2 dk', s: 120 }].map(opt => (
-                                    <motion.div key={opt.s} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="w-full sm:w-auto">
-                                        <Button size="xl" className="w-full sm:w-auto px-10 py-5 text-xl"
-                                            onClick={() => socket?.emit('set_timer', { roomCode, durationSeconds: opt.s })}>
-                                            {opt.l}
-                                        </Button>
-                                    </motion.div>
+                        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                            className="flex flex-col items-center w-full max-w-md">
+                            <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 20, repeat: Infinity, ease: 'linear' }}>
+                                <Clock className="w-12 h-12 text-brand-cyan/50 mb-4"
+                                    style={{ filter: 'drop-shadow(0 0 16px rgba(0,240,255,0.5))' }} />
+                            </motion.div>
+                            <h2 className="text-3xl font-black text-white uppercase tracking-widest mb-2 mt-2">Süre Seç</h2>
+                            <p className="text-white/25 text-[10px] mb-10 uppercase tracking-widest">Bu tur için kaç dakikan olsun?</p>
+
+                            <div className="grid grid-cols-3 gap-3 w-full max-w-xs sm:max-w-sm">
+                                {[
+                                    { l: '1 dk', s: 60, sub: 'Hızlı' },
+                                    { l: '1:30', s: 90, sub: 'Standart' },
+                                    { l: '2 dk', s: 120, sub: 'Detaylı' },
+                                ].map(opt => (
+                                    <motion.button key={opt.s}
+                                        whileHover={{ scale: 1.06, y: -4 }} whileTap={{ scale: 0.96 }}
+                                        onClick={() => socket?.emit('set_timer', { roomCode, durationSeconds: opt.s })}
+                                        className="flex flex-col items-center p-5 rounded-2xl bg-white/5 border border-white/10 hover:border-brand-cyan/40 hover:bg-brand-cyan/5 transition-all group"
+                                    >
+                                        <span className="text-xl font-black text-white group-hover:text-brand-cyan transition-colors">{opt.l}</span>
+                                        <span className="text-[9px] text-white/25 uppercase tracking-widest mt-1 group-hover:text-brand-cyan/50 transition-colors">{opt.sub}</span>
+                                    </motion.button>
                                 ))}
                             </div>
+
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
+                                className="mt-8 w-full max-w-xs sm:max-w-sm">
+                                <NeonCard>
+                                    <p className="text-[9px] text-white/25 uppercase tracking-widest font-black mb-3">🎯 Hedef Kelimen</p>
+                                    <p className="text-[clamp(2rem,8vw,3.5rem)] font-black text-transparent bg-clip-text bg-gradient-to-br from-white to-white/50 tracking-tight">
+                                        {targetWord}
+                                    </p>
+                                </NeonCard>
+                            </motion.div>
                         </motion.div>
                         <NavButtons />
                     </div>
                 );
             }
-            return (
-                <>
-                    <TimerBar />
-                    <MiniScoreboard />
-                    <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center px-4 pt-[calc(4rem+env(safe-area-inset-top))] pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-                            <p className="text-base text-brand-cyan font-bold uppercase tracking-[0.3em] mb-4">📢 Sen Anlatıcısın</p>
-                            <NeonCard className="py-8 px-6 mb-6 w-full max-w-sm mx-auto">
-                                <p className="text-xs font-bold text-white/40 uppercase tracking-widest mb-4">🎯 Hedef Kelime</p>
-                                <h1 className="text-[clamp(2.5rem,10vw,5rem)] font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-white to-white/60">
-                                    {targetWord}
-                                </h1>
-                            </NeonCard>
-                            <div className="bg-brand-pink/15 border border-brand-pink/30 border-dashed rounded-2xl p-5 max-w-md mx-auto">
-                                <p className="text-brand-pink font-bold text-xs uppercase tracking-widest mb-1">⚠️ Uyarı</p>
-                                <p className="text-white/60 text-sm">Kelimeyi anlat ama yasaklı kelimeleri söyleme!</p>
-                            </div>
-                        </motion.div>
-                    </div>
-                    <NavButtons />
-                    <ToastOverlay />
-                </>
-            );
-        }
 
-        // ── Saboteur: word buttons ───────────────────────────────────────
-        if (myRole === 'saboteur') {
-            return (
-                <>
-                    <TimerBar />
-                    <MiniScoreboard />
-                    <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pt-[calc(5rem+env(safe-area-inset-top))] pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
-                        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
-                            <div className="text-5xl mb-3">🕵️</div>
-                            <h2 className="text-2xl font-black text-brand-pink uppercase tracking-widest mb-2">Sabotajcı</h2>
-                            <p className="text-white/40 text-xs mb-1">Hedef: <span className="text-brand-pink font-bold">{targetWord}</span></p>
-                            <p className="text-white/30 text-xs mb-6">Anlatıcı yasaklı kelimelerden birini söylerse tıklayıp YANDI de!</p>
+            // Narrator — timer running
+            if (myRole === 'narrator') {
+                return (
+                    <>
+                        <FloatingTimer />
+                        <MiniScoreboard />
+                        <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center px-4
+                            pt-[calc(5.5rem+env(safe-area-inset-top))]
+                            pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
+                            <motion.div initial={{ scale: 0.88, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                                className="w-full max-w-sm">
+                                <motion.p
+                                    className="text-[10px] text-brand-cyan font-black uppercase tracking-[0.35em] mb-6"
+                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
+                                >
+                                    📢 Sen Anlatıcısın
+                                </motion.p>
 
-                            <div className="flex flex-wrap gap-3 justify-center mb-6 w-full max-w-xs sm:max-w-md">
-                                {saboteurWords.length > 0 ? saboteurWords.map((w, i) => (
-                                    <motion.button key={i} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
-                                        onClick={() => setSelectedWord(w === selectedWord ? null : w)}
-                                        className={`px-6 py-3.5 rounded-2xl font-bold text-lg border-2 transition-all duration-200
-                                            ${selectedWord === w
-                                                ? 'bg-brand-pink text-white border-brand-pink shadow-[0_0_25px_rgba(255,0,128,0.5)] scale-105'
-                                                : 'bg-brand-pink/10 text-brand-pink border-brand-pink/30 hover:bg-brand-pink/20'}`}>
-                                        {w}
-                                    </motion.button>
-                                )) : (
-                                    <p className="text-white/30 italic text-sm">Kelimeler yükleniyor...</p>
-                                )}
-                            </div>
+                                <NeonCard className="py-8 px-6 mb-6">
+                                    <p className="text-[9px] font-bold text-white/25 uppercase tracking-widest mb-4">🎯 Hedef Kelime</p>
+                                    <h1 className="text-[clamp(2.5rem,10vw,5rem)] font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-white to-white/50">
+                                        {targetWord}
+                                    </h1>
+                                </NeonCard>
 
-                            <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                                <Button variant="danger" size="xl" className="px-14 py-5 text-2xl shadow-[0_0_30px_rgba(255,0,128,0.4)]"
+                                <motion.div
+                                    className="flex items-start gap-3 bg-brand-pink/10 border border-dashed border-brand-pink/25 rounded-2xl p-4 text-left"
+                                    animate={{ borderColor: ['rgba(255,0,85,0.25)', 'rgba(255,0,85,0.55)', 'rgba(255,0,85,0.25)'] }}
+                                    transition={{ duration: 2.5, repeat: Infinity }}
+                                >
+                                    <span className="text-brand-pink text-lg flex-shrink-0">⚠️</span>
+                                    <div>
+                                        <p className="text-brand-pink font-bold text-[10px] uppercase tracking-widest mb-1">Uyarı</p>
+                                        <p className="text-white/45 text-sm leading-relaxed">Kelimeyi anlat ama sabotajcının tuzaklarına DÜŞME!</p>
+                                    </div>
+                                </motion.div>
+                            </motion.div>
+                        </div>
+                        <NavButtons />
+                        <ToastOverlay />
+                    </>
+                );
+            }
+
+            // Saboteur — word buttons
+            if (myRole === 'saboteur') {
+                return (
+                    <>
+                        <FloatingTimer />
+                        <MiniScoreboard />
+                        <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6
+                            pt-[calc(5.5rem+env(safe-area-inset-top))]
+                            pb-[max(6.5rem,calc(5.5rem+env(safe-area-inset-bottom)))]">
+                            <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                                className="w-full max-w-sm">
+                                <motion.div
+                                    className="inline-flex items-center gap-2 bg-brand-pink/10 border border-brand-pink/25 px-4 py-1.5 rounded-full mb-3"
+                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
+                                    <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-pink">🕵️ Sabotajcı</span>
+                                </motion.div>
+                                <p className="text-white/25 text-xs mt-2 mb-1">
+                                    Hedef: <span className="text-brand-pink font-bold">{targetWord}</span>
+                                </p>
+                                <p className="text-white/20 text-[10px] mb-7">Anlatıcı yasaklı kelimelerden birini söylerse tıkla!</p>
+
+                                <div className="flex flex-wrap gap-3 justify-center mb-8">
+                                    {saboteurWords.length > 0 ? saboteurWords.map((w, i) => (
+                                        <motion.button key={i}
+                                            whileHover={{ scale: 1.07 }} whileTap={{ scale: 0.93 }}
+                                            onClick={() => setSelectedWord(w === selectedWord ? null : w)}
+                                            className={`px-7 py-3.5 rounded-2xl font-bold text-lg border-2 transition-all duration-200
+                                                ${selectedWord === w
+                                                    ? 'bg-brand-pink text-white border-brand-pink shadow-[0_0_35px_rgba(255,0,85,0.55)] scale-105'
+                                                    : 'bg-brand-pink/10 text-brand-pink border-brand-pink/25 hover:bg-brand-pink/20 hover:border-brand-pink/50'}`}>
+                                            {w}
+                                        </motion.button>
+                                    )) : (
+                                        <div className="flex flex-col items-center gap-2 py-4">
+                                            <AnimatedDots />
+                                            <p className="text-white/25 text-sm mt-2">Kelimeler yükleniyor...</p>
+                                        </div>
+                                    )}
+                                </div>
+
+                                <Button variant="danger" size="xl"
+                                    className="w-full shadow-[0_0_45px_rgba(255,0,85,0.35)] flex items-center justify-center gap-3"
                                     disabled={!selectedWord}
                                     onClick={() => {
                                         if (selectedWord) {
@@ -475,6 +737,74 @@ export const Lobby = () => {
                                     🔥 YANDI!
                                 </Button>
                             </motion.div>
+                        </div>
+                        <NavButtons />
+                        <ToastOverlay />
+                    </>
+                );
+            }
+
+            // Guesser
+            return (
+                <>
+                    <FloatingTimer />
+                    <MiniScoreboard />
+                    <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 w-full max-w-md mx-auto
+                        pt-[calc(5.5rem+env(safe-area-inset-top))]
+                        pb-[max(6.5rem,calc(5.5rem+env(safe-area-inset-bottom)))]">
+                        <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full">
+                            <motion.div
+                                className="inline-flex items-center gap-2 bg-brand-cyan/10 border border-brand-cyan/20 px-4 py-1.5 rounded-full mb-6"
+                                initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+                                <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-cyan">🔍 Tahminci</span>
+                            </motion.div>
+
+                            <p className="text-white/30 text-sm mb-7">Anlatıcıyı dinle ve hedef kelimeyi tahmin et!</p>
+
+                            {/* Lives */}
+                            <div className="flex items-center justify-center gap-3 mb-8">
+                                {[1, 2, 3].map(i => (
+                                    <motion.div key={i}
+                                        className={`w-4 h-4 rounded-full transition-all duration-400 ${i <= guessesLeft ? 'bg-brand-cyan' : 'bg-white/10'}`}
+                                        style={i <= guessesLeft ? { boxShadow: '0 0 12px rgba(0,240,255,0.65)' } : {}}
+                                        animate={i <= guessesLeft ? { scale: [1, 1.2, 1] } : {}}
+                                        transition={{ duration: 1.8, repeat: Infinity, delay: i * 0.25 }}
+                                    />
+                                ))}
+                                <span className="text-white/25 text-xs ml-1">{guessesLeft}/3 hak</span>
+                            </div>
+
+                            {guessesLeft > 0 ? (
+                                <NeonCard className="w-full">
+                                    <div className="flex gap-2">
+                                        <Input
+                                            placeholder="Tahminini yaz..."
+                                            value={guessInput}
+                                            onChange={e => setGuessInput(e.target.value)}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter' && guessInput.trim()) {
+                                                    socket?.emit('submit_guess', { roomCode, roundId, guessWord: guessInput.trim() });
+                                                    setGuessInput(''); setGuessesLeft(p => p - 1);
+                                                }
+                                            }}
+                                        />
+                                        <Button disabled={!guessInput.trim()} onClick={() => {
+                                            if (guessInput.trim()) {
+                                                socket?.emit('submit_guess', { roomCode, roundId, guessWord: guessInput.trim() });
+                                                setGuessInput(''); setGuessesLeft(p => p - 1);
+                                            }
+                                        }}>
+                                            Tahmin Et
+                                        </Button>
+                                    </div>
+                                </NeonCard>
+                            ) : (
+                                <NeonCard variant="danger" className="w-full">
+                                    <div className="text-4xl mb-2">😵</div>
+                                    <p className="text-brand-pink font-bold text-lg">Tahmin hakkın bitti!</p>
+                                    <p className="text-white/25 text-sm mt-1">Sonuçları bekle...</p>
+                                </NeonCard>
+                            )}
                         </motion.div>
                     </div>
                     <NavButtons />
@@ -483,183 +813,200 @@ export const Lobby = () => {
             );
         }
 
-        // ── Guesser ──────────────────────────────────────────────────────
+        // ── LOBBY ─────────────────────────────────────────────────────────────
         return (
-            <>
-                <TimerBar />
-                <MiniScoreboard />
-                <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pt-[calc(5rem+env(safe-area-inset-top))] pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))] w-full max-w-md mx-auto">
-                    <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full">
-                        <div className="text-5xl mb-3">🔍</div>
-                        <h2 className="text-2xl font-black text-brand-cyan uppercase tracking-widest mb-3">Tahminci</h2>
-                        <p className="text-white/40 text-sm mb-2">Anlatıcıyı dinle ve hedef kelimeyi tahmin et!</p>
+            <div className="flex flex-col items-center min-h-[100dvh] p-4 md:p-6 relative pt-24 pb-[calc(100px+env(safe-area-inset-bottom))]">
+                {/* Top bar */}
+                <div className="absolute top-0 left-0 right-0 p-4 md:p-6 flex justify-between items-center z-50 pt-[calc(1rem+env(safe-area-inset-top))]">
+                    <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                        onClick={() => navigate('/')}
+                        className="bg-white/5 hover:bg-white/15 text-white/55 hover:text-white px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border border-white/10 transition-all backdrop-blur-xl min-h-[48px] flex items-center gap-2">
+                        <ArrowLeft className="w-4 h-4" /> Çık
+                    </motion.button>
+                    <LanguageToggle />
+                </div>
 
-                        <div className="flex items-center justify-center gap-2 mb-6">
-                            {[1, 2, 3].map(i => (
-                                <div key={i} className={`w-3.5 h-3.5 rounded-full transition-all duration-300 ${i <= guessesLeft ? 'bg-brand-cyan shadow-[0_0_8px_rgba(0,240,255,0.5)]' : 'bg-white/15'}`} />
-                            ))}
-                            <span className="text-white/40 text-xs ml-2">{guessesLeft}/3 hak</span>
+                {/* Room code */}
+                <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
+                    className="text-center mb-6 w-full">
+                    <p className="text-white/20 uppercase tracking-[0.5em] font-bold text-[9px] mb-2">Oda Kodu</p>
+                    <motion.h1
+                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                        onClick={() => {
+                            navigator.clipboard.writeText(roomCode || '');
+                            showToast('correct', '📋 Oda Kodu Kopyalandı!', 2000);
+                        }}
+                        className="text-[clamp(3rem,12vw,6.5rem)] font-black font-mono tracking-widest text-transparent bg-clip-text bg-gradient-to-br from-brand-cyan via-blue-400 to-purple-500 cursor-pointer hover:opacity-75 transition-opacity break-all px-2"
+                        title="Kopyalamak için tıkla"
+                    >
+                        {roomCode}
+                    </motion.h1>
+                    <motion.p className="text-white/15 text-[9px] uppercase tracking-widest mt-1 font-bold"
+                        animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: 2.5, repeat: Infinity }}>
+                        Tıkla &amp; Kopyala
+                    </motion.p>
+                </motion.div>
+
+                <div className="w-full max-w-5xl grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-12 mt-4">
+                    {/* Players */}
+                    <NeonCard className="md:col-span-7 flex flex-col h-full">
+                        <div className="flex items-center justify-between mb-5 border-b border-white/[0.07] pb-4">
+                            <div className="flex items-center gap-2.5 text-white/50">
+                                <Users className="w-4 h-4" />
+                                <h2 className="text-xs font-black uppercase tracking-widest">Oyuncular</h2>
+                            </div>
+                            <span className="bg-brand-cyan/10 text-brand-cyan px-3 py-1 rounded-full text-[10px] font-black tracking-widest">
+                                {players.length}/8
+                            </span>
                         </div>
 
-                        {guessesLeft > 0 ? (
-                            <NeonCard className="w-full">
-                                <div className="flex gap-2">
-                                    <Input placeholder="Tahminini yaz..." value={guessInput}
-                                        onChange={e => setGuessInput(e.target.value)}
-                                        onKeyDown={e => {
-                                            if (e.key === 'Enter' && guessInput.trim()) {
-                                                socket?.emit('submit_guess', { roomCode, roundId, guessWord: guessInput.trim() });
-                                                setGuessInput(''); setGuessesLeft(p => p - 1);
-                                            }
-                                        }} />
-                                    <Button disabled={!guessInput.trim()} onClick={() => {
-                                        if (guessInput.trim()) {
-                                            socket?.emit('submit_guess', { roomCode, roundId, guessWord: guessInput.trim() });
-                                            setGuessInput(''); setGuessesLeft(p => p - 1);
-                                        }
-                                    }}>Tahmin Et</Button>
+                        <motion.div className="space-y-2.5"
+                            variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.07 } } }}
+                            initial="hidden" animate="show">
+                            <AnimatePresence>
+                                {players.map(p => {
+                                    const col = playerColor(p.name);
+                                    const pts = scores.find(s => s.name === p.name)?.points ?? 0;
+                                    const initials = p.name.slice(0, 2).toUpperCase();
+                                    return (
+                                        <motion.div key={p.name}
+                                            variants={{ hidden: { opacity: 0, y: 14, scale: 0.94 }, show: { opacity: 1, y: 0, scale: 1 } }}
+                                            exit={{ opacity: 0, scale: 0.9, x: -20, transition: { duration: 0.2 } }}
+                                            className="flex items-center gap-3 rounded-2xl px-4 py-3.5 transition-all hover:scale-[1.015]"
+                                            style={{ background: col.bg, border: `1px solid ${col.border}` }}>
+                                            {/* Avatar */}
+                                            <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm shrink-0"
+                                                style={{ background: `${col.main}18`, color: col.main, border: `1px solid ${col.main}28` }}>
+                                                {initials}
+                                            </div>
+                                            <span className="font-bold text-sm flex-1 tracking-wide">
+                                                {p.name}
+                                                {p.name === username && (
+                                                    <span className="text-[9px] ml-2 px-2 py-0.5 rounded-md uppercase tracking-widest font-black"
+                                                        style={{ background: `${col.main}14`, color: col.main }}>
+                                                        sen
+                                                    </span>
+                                                )}
+                                            </span>
+                                            {pts > 0 && (
+                                                <motion.span
+                                                    key={pts}
+                                                    initial={{ scale: 1.3 }} animate={{ scale: 1 }}
+                                                    className="font-mono font-black text-sm px-2.5 py-1 rounded-lg shrink-0"
+                                                    style={{ background: `${col.main}12`, color: col.main }}>
+                                                    {pts} pt
+                                                </motion.span>
+                                            )}
+                                        </motion.div>
+                                    );
+                                })}
+                            </AnimatePresence>
+                            {players.length === 0 && (
+                                <div className="flex flex-col items-center justify-center py-10 opacity-25">
+                                    <Users className="w-10 h-10 mb-3" />
+                                    <p className="text-sm italic">Oyuncular bekleniyor...</p>
+                                </div>
+                            )}
+                        </motion.div>
+                    </NeonCard>
+
+                    {/* Settings / Rules + Start */}
+                    <div className="md:col-span-5 flex flex-col gap-4 md:gap-6">
+                        {isHost ? (
+                            <NeonCard className="flex flex-col gap-5 text-left">
+                                <div className="flex items-center gap-2.5 text-white/45 border-b border-white/[0.07] pb-4 mb-1">
+                                    <Settings className="w-4 h-4" />
+                                    <h3 className="text-xs font-black uppercase tracking-widest">Oyun Ayarları</h3>
+                                </div>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-[9px] text-white/35 mb-2 block font-black uppercase tracking-widest">Kelime Kategorisi</label>
+                                        <select
+                                            className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3.5 text-sm outline-none focus:border-brand-cyan/40 text-white transition-all appearance-none cursor-pointer hover:bg-white/5"
+                                            value={category} onChange={e => setCategory(e.target.value)}>
+                                            <option value="Rastgele">🎲 Rastgele</option>
+                                            <option value="Animals & Nature">🦁 Hayvanlar & Doğa</option>
+                                            <option value="Movies & Series">🎬 Film & Dizi</option>
+                                            <option value="Technology & Science">💻 Teknoloji & Bilim</option>
+                                            <option value="Everyday Objects">🪑 Günlük Eşyalar</option>
+                                            <option value="History & Culture">🏛️ Tarih & Kültür</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-[9px] text-white/35 mb-2 block font-black uppercase tracking-widest">Hedef Skor</label>
+                                        <select
+                                            className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3.5 text-sm outline-none focus:border-brand-pink/40 text-white transition-all appearance-none cursor-pointer hover:bg-white/5"
+                                            value={targetScore ?? 'Endless'} onChange={e => setTargetScore(e.target.value === 'Endless' ? null : Number(e.target.value))}>
+                                            <option value="Endless">♾️ Sonsuz</option>
+                                            <option value="50">🏆 50 Puan</option>
+                                            <option value="100">🏆 100 Puan</option>
+                                            <option value="150">🏆 150 Puan</option>
+                                        </select>
+                                    </div>
                                 </div>
                             </NeonCard>
                         ) : (
-                            <NeonCard variant="danger" className="w-full">
-                                <div className="text-4xl mb-2">😵</div>
-                                <p className="text-brand-pink font-bold text-lg">Tahmin hakkın bitti!</p>
-                                <p className="text-white/30 text-sm mt-1">Sonuçları bekle...</p>
+                            <NeonCard variant="secondary" className="flex-grow flex flex-col justify-center items-center text-center p-8">
+                                <AlertCircle className="w-8 h-8 text-brand-cyan mb-4 opacity-35" />
+                                <h3 className="text-sm font-black mb-3 uppercase tracking-widest">{t('rulesTitle')}</h3>
+                                <p className="text-white/45 text-sm leading-relaxed">{t('rulesText1')}</p>
+                                <p className="text-white/25 text-[10px] mt-4 uppercase tracking-widest">{t('rulesText2')}</p>
                             </NeonCard>
                         )}
-                    </motion.div>
-                </div>
-                <NavButtons />
-                <ToastOverlay />
-            </>
-        );
-    }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // ─── LOBBY ───────────────────────────────────────────────────────────
-    // ══════════════════════════════════════════════════════════════════════
-    return (
-        <div className="flex flex-col items-center min-h-[100dvh] p-4 md:p-6 relative pt-24 pb-[calc(100px+env(safe-area-inset-bottom))]">
-            <div className="absolute top-0 left-0 right-0 p-4 md:p-6 flex justify-between items-center z-50 pt-[calc(1rem+env(safe-area-inset-top))]">
-                <button
-                    onClick={() => navigate('/')}
-                    className="bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border border-white/10 transition-all backdrop-blur-xl min-h-[48px] flex items-center gap-2 shadow-lg"
-                >
-                    <ArrowLeft className="w-4 h-4" /> Odadan Çık
-                </button>
-                <LanguageToggle />
-            </div>
-
-            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-8 md:mb-10 w-full">
-                <p className="text-white/30 uppercase tracking-[0.4em] font-bold text-xs mb-2">{t('roomCode')}</p>
-                <h1
-                    onClick={() => {
-                        navigator.clipboard.writeText(roomCode || '');
-                        showToast('correct', '📋 Oda Kodu Kopyalandı!', 2000);
-                    }}
-                    className="text-[clamp(3.5rem,12vw,7rem)] font-black font-mono tracking-widest text-transparent bg-clip-text bg-gradient-to-br from-brand-cyan via-blue-400 to-purple-500 cursor-pointer hover:opacity-80 transition-opacity break-all px-2"
-                    title="Kopyalamak için tıkla"
-                >
-                    {roomCode}
-                </h1>
-            </motion.div>
-
-            <div className="w-full max-w-5xl grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-12 mt-8">
-                {/* Player list with scores */}
-                <NeonCard className="md:col-span-7 flex flex-col h-full">
-                    <div className="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
-                        <div className="flex items-center gap-3 text-brand-cyan">
-                            <Users className="w-5 h-5" />
-                            <h2 className="text-sm font-bold uppercase tracking-widest">{t('players')}</h2>
-                        </div>
-                        <span className="bg-brand-cyan/15 text-brand-cyan px-4 py-1.5 rounded-full text-xs font-black tracking-widest">{players.length}/8</span>
-                    </div>
-                    <motion.div className="space-y-3" variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } }} initial="hidden" animate="show">
-                        <AnimatePresence>
-                            {players.map((p, idx) => {
-                                const sc = scores.find(s => s.name === p.name);
-                                const pts = sc ? sc.points : 0;
-                                return (
-                                    <motion.div key={p.name + idx} variants={{ hidden: { opacity: 0, y: 20, scale: 0.95 }, show: { opacity: 1, y: 0, scale: 1 } }} exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-                                        className="flex items-center justify-between bg-white/5 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 hover:border-brand-cyan/40 transition-all hover:bg-white/10 backdrop-blur-md shadow-[inset_0_2px_10px_rgba(0,0,0,0.2)]">
-                                        <span className="font-bold text-sm tracking-wide">
-                                            {p.name}
-                                            {p.name === username && <span className="text-brand-cyan ml-2 text-[10px] px-2 py-1 bg-brand-cyan/10 rounded-md tracking-widest uppercase">{t('you')}</span>}
-                                        </span>
-                                        <span className="text-brand-cyan font-mono font-black text-sm bg-brand-cyan/10 px-3 py-1.5 rounded-lg shadow-inner">{pts} pt</span>
-                                    </motion.div>
-                                );
-                            })}
-                        </AnimatePresence>
-                        {players.length === 0 && (
-                            <div className="flex flex-col items-center justify-center py-10 opacity-50">
-                                <Users className="w-12 h-12 mb-4" />
-                                <p className="text-center italic text-sm">{t('waitingPlayers')}</p>
-                            </div>
+                        {isHost ? (
+                            <Button size="xl"
+                                className="w-full flex items-center justify-center gap-3 group shadow-[0_15px_40px_rgba(0,240,255,0.28)]"
+                                onClick={() => {
+                                    if (players.length < 1) { alert(t('needPlayersAlert')); return; }
+                                    socket?.emit('start_game', { roomCode, language, category, targetScore });
+                                }}
+                                disabled={players.length < 1}>
+                                <Gamepad2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                                {t('startGame')}
+                            </Button>
+                        ) : (
+                            <NeonCard className="text-center py-5 border-brand-cyan/15">
+                                <motion.p className="text-brand-cyan text-[10px] font-black uppercase tracking-widest"
+                                    animate={{ opacity: [0.45, 1, 0.45] }} transition={{ duration: 2, repeat: Infinity }}>
+                                    {t('waitingHost')}
+                                </motion.p>
+                            </NeonCard>
                         )}
-                    </motion.div>
-                </NeonCard>
-
-                <div className="md:col-span-5 flex flex-col gap-4 md:gap-6">
-                    {isHost ? (
-                        <NeonCard className="flex flex-col gap-5 text-left h-full">
-                            <div className="flex items-center gap-3 text-brand-pink border-b border-white/10 pb-4 mb-2">
-                                <Settings className="w-5 h-5" />
-                                <h3 className="text-sm font-bold uppercase tracking-widest">Oyun Ayarları</h3>
-                            </div>
-
-                            <div className="space-y-4 flex-grow">
-                                <div>
-                                    <label className="text-[10px] text-white/50 mb-2 block font-black uppercase tracking-widest">Kelime Kategorisi</label>
-                                    <select className="w-full bg-black/40 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 text-sm outline-none focus:border-brand-cyan/50 focus:ring-4 focus:ring-brand-cyan/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/10 shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
-                                        value={category} onChange={e => setCategory(e.target.value)}>
-                                        <option value="Rastgele">🎲 Rastgele (Karışık)</option>
-                                        <option value="Animals & Nature">🦁 Hayvanlar ve Doğa</option>
-                                        <option value="Movies & Series">🎬 Filmler ve Diziler</option>
-                                        <option value="Technology & Science">💻 Teknoloji ve Bilim</option>
-                                        <option value="Everyday Objects">🪑 Günlük Eşyalar</option>
-                                        <option value="History & Culture">🏛️ Tarih ve Kültür</option>
-                                    </select>
-                                </div>
-
-                                <div>
-                                    <label className="text-[10px] text-white/50 mb-2 block font-black uppercase tracking-widest">Hedef Skor</label>
-                                    <select className="w-full bg-black/40 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 text-sm outline-none focus:border-brand-pink/50 focus:ring-4 focus:ring-brand-pink/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/10 shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
-                                        value={targetScore || 'Endless'} onChange={e => setTargetScore(e.target.value === 'Endless' ? null : Number(e.target.value))}>
-                                        <option value="Endless">♾️ Sonsuz Döngü</option>
-                                        <option value="50">🏆 50 Puan</option>
-                                        <option value="100">🏆 100 Puan</option>
-                                        <option value="150">🏆 150 Puan</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </NeonCard>
-                    ) : (
-                        <NeonCard variant="secondary" className="flex-grow flex flex-col justify-center items-center text-center p-8">
-                            <AlertCircle className="w-10 h-10 text-brand-cyan mb-4 opacity-50" />
-                            <h3 className="text-lg font-bold mb-3 uppercase tracking-widest">{t('rulesTitle')}</h3>
-                            <p className="text-white/60 text-sm leading-relaxed">{t('rulesText1')}</p>
-                            <p className="text-white/40 text-[10px] mt-4 uppercase tracking-widest">{t('rulesText2')}</p>
-                        </NeonCard>
-                    )}
-
-                    {isHost ? (
-                        <Button size="xl" className="w-full shadow-[0_15px_40px_rgba(0,240,255,0.4)] flex items-center justify-center gap-3 group"
-                            onClick={() => {
-                                if (players.length < 1) { alert(t('needPlayersAlert')); return; }
-                                socket?.emit('start_game', { roomCode, language, category, targetScore });
-                            }}
-                            disabled={players.length < 1}>
-                            <Gamepad2 className="w-6 h-6 group-hover:scale-110 transition-transform" />
-                            {t('startGame')}
-                        </Button>
-                    ) : (
-                        <NeonCard className="text-center py-6 border-brand-cyan/20">
-                            <p className="text-brand-cyan animate-pulse text-xs font-bold uppercase tracking-widest">{t('waitingHost')}</p>
-                        </NeonCard>
-                    )}
+                    </div>
                 </div>
+                <ToastOverlay />
             </div>
-        </div>
+        );
+    };
+
+    // ─── Root render ──────────────────────────────────────────────────────────
+    return (
+        <>
+            <AnimatePresence>
+                {roleRevealData && (
+                    <RoleReveal
+                        key="role-reveal"
+                        role={roleRevealData.role}
+                        targetWord={roleRevealData.targetWord}
+                        onComplete={() => setRoleRevealData(null)}
+                    />
+                )}
+            </AnimatePresence>
+            <AnimatePresence>
+                {yandiData && (
+                    <YandiOverlay
+                        key="yandi"
+                        word={yandiData.word}
+                        onComplete={() => setYandiData(null)}
+                    />
+                )}
+            </AnimatePresence>
+            <ScorePopup
+                popups={scorePopups}
+                onRemove={id => setScorePopups(p => p.filter(x => x.id !== id))}
+            />
+            {renderContent()}
+        </>
     );
 };
