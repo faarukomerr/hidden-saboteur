@@ -25,8 +25,12 @@
             radial-gradient(circle at bottom left, rgba(0, 240, 255, 0.15), transparent 40%);
         background-attachment: fixed;
         font-family: 'Inter', sans-serif;
-        min-height: 100vh;
+        min-height: 100vh; /* fallback */
+        min-height: 100dvh; /* mobile safari fix */
         overflow-x: hidden;
+        -webkit-tap-highlight-color: transparent;
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-top: env(safe-area-inset-top);
     }
 
     h1,

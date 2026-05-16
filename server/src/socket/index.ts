@@ -11,9 +11,13 @@ interface RoomState {
     targetWord: string;
     saboteurWords: string[];
     saboteurSocketId: string | null;
-    timerInterval: NodeJS.Timeout | null;
-    timeLeft: number;
+    timerTimeout: NodeJS.Timeout | null;
+    endTime: number | null;
     scores: Record<string, number>; // socketId → score
+    guesses: Record<string, number>; // socketId → guess count
+    category: string;
+    targetScore: number | null;
+    narratorSocketId: string | null;
 }
 
 const rooms = new Map<string, RoomState>();
@@ -24,7 +28,7 @@ function getRoom(roomCode: string): RoomState {
     if (!rooms.has(roomCode)) {
         rooms.set(roomCode, {
             language: 'en', roundId: '', targetWord: '', saboteurWords: [],
-            saboteurSocketId: null, timerInterval: null, timeLeft: 0, scores: {}
+            saboteurSocketId: null, timerTimeout: null, endTime: null, scores: {}, guesses: {}, category: 'Rastgele', targetScore: null, narratorSocketId: null
         });
     }
     return rooms.get(roomCode)!;
@@ -32,10 +36,10 @@ function getRoom(roomCode: string): RoomState {
 
 function clearTimer(roomCode: string) {
     const state = rooms.get(roomCode);
-    if (state?.timerInterval) {
-        clearInterval(state.timerInterval);
-        state.timerInterval = null;
-        state.timeLeft = 0;
+    if (state?.timerTimeout) {
+        clearTimeout(state.timerTimeout);
+        state.timerTimeout = null;
+        state.endTime = null;
     }
 }
 
@@ -64,9 +68,11 @@ export const initSocketServer = async (server: any) => {
             clearTimer(roomCode);
             state.saboteurWords = [];
             state.saboteurSocketId = null;
-            state.timeLeft = 0;
+            state.narratorSocketId = null;
+            state.endTime = null;
+            state.guesses = {};
 
-            const roundData = await GameService.startRound(roomCode, state.language);
+            const roundData = await GameService.startRound(roomCode, state.language, state.category);
             state.roundId = roundData.roundId;
             state.targetWord = roundData.targetWord;
 
@@ -77,6 +83,7 @@ export const initSocketServer = async (server: any) => {
             }
 
             // Emit roles
+            state.narratorSocketId = roundData.roles.narrator;
             io.to(roundData.roles.narrator).emit('role_assigned', {
                 role: 'narrator', targetWord: roundData.targetWord, roundId: roundData.roundId
             });
@@ -112,22 +119,19 @@ export const initSocketServer = async (server: any) => {
         const startTimer = (roomCode: string, seconds: number) => {
             const state = getRoom(roomCode);
             clearTimer(roomCode);
-            state.timeLeft = seconds;
+            
+            const endTime = Date.now() + seconds * 1000;
+            state.endTime = endTime;
 
-            io.to(roomCode).emit('timer_sync', { timeLeft: seconds, total: seconds });
+            io.to(roomCode).emit('timer_start', { endTime, total: seconds });
 
-            state.timerInterval = setInterval(() => {
-                state.timeLeft--;
-                io.to(roomCode).emit('timer_sync', { timeLeft: state.timeLeft, total: seconds });
-
-                if (state.timeLeft <= 0) {
-                    clearTimer(roomCode);
-                    // Time expired → show round summary, wait for host to start next
-                    io.to(roomCode).emit('round_summary', {
-                        targetWord: state.targetWord, winnerName: '', reason: 'timeout'
-                    });
-                }
-            }, 1000);
+            state.timerTimeout = setTimeout(() => {
+                clearTimer(roomCode);
+                // Time expired → show round summary, wait for host to start next
+                io.to(roomCode).emit('round_summary', {
+                    targetWord: state.targetWord, winnerName: '', reason: 'timeout'
+                });
+            }, seconds * 1000);
         };
 
         // ── Connections ─────────────────────────────────────────────────
@@ -145,7 +149,9 @@ export const initSocketServer = async (server: any) => {
                     // Late join: sync timer + scores
                     const state = rooms.get(roomCode);
                     if (state) {
-                        if (state.timeLeft > 0) socket.emit('timer_sync', { timeLeft: state.timeLeft, total: 0 });
+                        if (state.endTime && state.endTime > Date.now()) {
+                            socket.emit('timer_start', { endTime: state.endTime, total: 0 });
+                        }
                         broadcastScores(roomCode);
                     }
                 } catch (error: any) {
@@ -154,10 +160,12 @@ export const initSocketServer = async (server: any) => {
             });
 
             // 2. Start Game
-            socket.on('start_game', async ({ roomCode, language }: { roomCode: string, language?: string }) => {
+            socket.on('start_game', async ({ roomCode, language, category, targetScore }: { roomCode: string, language?: string, category?: string, targetScore?: number | null }) => {
                 try {
                     const state = getRoom(roomCode);
                     state.language = language || 'en';
+                    state.category = category || 'Rastgele';
+                    state.targetScore = targetScore || null;
                     state.scores = {}; // Reset scores for new game
                     await startNewRound(roomCode);
                 } catch (error: any) {
@@ -202,14 +210,32 @@ export const initSocketServer = async (server: any) => {
             // 5. Guess
             socket.on('submit_guess', async ({ roomCode, roundId, guessWord }: { roomCode: string, roundId: string, guessWord: string }) => {
                 try {
+                    const state = getRoom(roomCode);
+                    const attempts = state.guesses[socket.id] || 0;
+                    
+                    if (attempts >= 3) {
+                        return socket.emit('error', { message: 'Tahmin hakkınız doldu!' });
+                    }
+                    
+                    state.guesses[socket.id] = attempts + 1;
                     const name = socketUsername.get(socket.id) || 'Anonim';
                     const isCorrect = await GameService.checkGuess(roundId, guessWord);
 
                     if (isCorrect) {
                         clearTimer(roomCode);
-                        const state = getRoom(roomCode);
                         state.scores[socket.id] = (state.scores[socket.id] || 0) + 10;
+                        if (state.narratorSocketId) {
+                            state.scores[state.narratorSocketId] = (state.scores[state.narratorSocketId] || 0) + 5;
+                        }
                         broadcastScores(roomCode);
+
+                        if (state.targetScore && state.scores[socket.id] >= state.targetScore) {
+                            return io.to(roomCode).emit('grand_winner', {
+                                winnerName: name,
+                                targetWord: state.targetWord,
+                                score: state.scores[socket.id]
+                            });
+                        }
 
                         io.to(roomCode).emit('round_summary', {
                             targetWord: state.targetWord, winnerName: name, reason: 'guess'
@@ -232,6 +258,18 @@ export const initSocketServer = async (server: any) => {
                         // Scoring: saboteur +15
                         state.scores[socket.id] = (state.scores[socket.id] || 0) + 15;
                         broadcastScores(roomCode);
+
+                        if (state.targetScore && state.scores[socket.id] >= state.targetScore) {
+                            io.in(roomCode).emit('sabotage_confirmed', { word });
+                            setTimeout(() => {
+                                io.to(roomCode).emit('grand_winner', {
+                                    winnerName: socketUsername.get(socket.id) || 'Sabotajcı',
+                                    targetWord: state.targetWord,
+                                    score: state.scores[socket.id]
+                                });
+                            }, 1500);
+                            return;
+                        }
 
                         io.in(roomCode).emit('sabotage_confirmed', { word });
 

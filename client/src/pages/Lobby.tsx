@@ -8,6 +8,8 @@ import { Input } from '../components/ui/Input';
 import { SabotageInputPhase } from '../components/game/SabotageInputPhase';
 import { useLanguage } from '../lib/i18n';
 import { LanguageToggle } from '../components/ui/LanguageToggle';
+import confetti from 'canvas-confetti';
+import { playSound } from '../lib/utils';
 
 interface Player { id: string; name: string; score: number; }
 interface ScoreEntry { name: string; socketId: string; points: number; }
@@ -21,15 +23,18 @@ export const Lobby = () => {
     const isHost = searchParams.get('host') === 'true';
 
     const [players, setPlayers] = useState<Player[]>([]);
-    const [phase, setPhase] = useState<'lobby' | 'sabotage_input' | 'narration' | 'round_summary' | 'game_over'>('lobby');
+    const [phase, setPhase] = useState<'lobby' | 'sabotage_input' | 'narration' | 'round_summary' | 'game_over' | 'grand_winner'>('lobby');
     const [myRole, setMyRole] = useState<'narrator' | 'guesser' | 'saboteur' | null>(null);
+    const [targetScore, setTargetScore] = useState<number | null>(50);
+    const [category, setCategory] = useState<string>('Rastgele');
+    const [grandWinnerData, setGrandWinnerData] = useState<any>(null);
     const [targetWord, setTargetWord] = useState<string | null>(null);
     const [roundId, setRoundId] = useState('');
     const { t, language } = useLanguage();
 
     // Timer — server is source of truth
     const [timeLeft, setTimeLeft] = useState(0);
-    const [timerStarted, setTimerStarted] = useState(false);
+    const [endTime, setEndTime] = useState<number | null>(null);
 
     // Saboteur clickable words
     const [saboteurWords, setSaboteurWords] = useState<string[]>([]);
@@ -51,7 +56,7 @@ export const Lobby = () => {
 
     const resetRoundState = () => {
         setMyRole(null); setTargetWord(null); setRoundId('');
-        setTimeLeft(0); setTimerStarted(false);
+        setTimeLeft(0); setEndTime(null);
         setSaboteurWords([]); setSelectedWord(null);
         setGuessesLeft(3); setGuessInput('');
         setToast(null); setCommentary(null);
@@ -76,15 +81,22 @@ export const Lobby = () => {
         socket.on('saboteur_words_list', (d: { words: string[] }) => setSaboteurWords(d.words));
         socket.on('sabotage_words_saved', (d: { words: string[] }) => setSaboteurWords(d.words || []));
 
-        socket.on('timer_sync', (d: { timeLeft: number }) => {
-            setTimeLeft(d.timeLeft);
-            if (d.timeLeft > 0) setTimerStarted(true);
+        socket.on('timer_start', (d: { endTime: number }) => {
+            setEndTime(d.endTime);
         });
 
         socket.on('scores_update', (d: { scores: ScoreEntry[] }) => setScores(d.scores));
 
         socket.on('sabotage_confirmed', (d: { word: string }) => {
+            playSound('buzzer');
             showToast('sabotage', `🔥 YANDI! "${d.word}" yakalandı!`, 4000);
+        });
+
+        socket.on('grand_winner', (d: any) => {
+            playSound('win');
+            confetti({ particleCount: 200, spread: 100, origin: { y: 0.5 } });
+            setGrandWinnerData(d);
+            setPhase('grand_winner');
         });
         socket.on('sabotage_failed', () => {
             showToast('wrong', '❌ Bu yasaklı kelimelerden biri değildi!', 3000);
@@ -101,17 +113,21 @@ export const Lobby = () => {
         socket.on('round_summary', (d: { targetWord: string; winnerName: string; reason: string }) => {
             setSummaryData(d);
             setPhase('round_summary');
-            setTimeLeft(0); setTimerStarted(false);
+            setTimeLeft(0); setEndTime(null);
+            if (d.reason === 'guess') {
+                playSound('ding');
+                confetti({ particleCount: 50, spread: 60 });
+            }
         });
 
-        socket.on('game_over', () => { setPhase('game_over'); setTimeLeft(0); setTimerStarted(false); });
+        socket.on('game_over', () => { setPhase('game_over'); setTimeLeft(0); setEndTime(null); });
         socket.on('force_reset', () => resetRoundState());
 
         return () => {
             ['room_state_update', 'role_assigned', 'phase_changed', 'saboteur_words_list',
-                'sabotage_words_saved', 'timer_sync', 'scores_update', 'sabotage_confirmed',
+                'sabotage_words_saved', 'timer_start', 'scores_update', 'sabotage_confirmed',
                 'sabotage_failed', 'host_commentary', 'guess_result', 'round_summary',
-                'game_over', 'force_reset'
+                'game_over', 'force_reset', 'grand_winner'
             ].forEach(e => socket.off(e));
         };
     }, [socket, isConnected, roomCode, username, navigate]);
@@ -120,9 +136,24 @@ export const Lobby = () => {
         setToast({ type, msg }); setTimeout(() => setToast(null), ms);
     };
 
+    useEffect(() => {
+        if (!endTime) {
+            setTimeLeft(0);
+            return;
+        }
+        let frame: number;
+        const updateTimer = () => {
+            const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+            setTimeLeft(remaining);
+            if (remaining > 0) frame = requestAnimationFrame(updateTimer);
+        };
+        updateTimer();
+        return () => cancelAnimationFrame(frame);
+    }, [endTime]);
+
     // ── Shared Components ────────────────────────────────────────────────
     const TimerBar = () => {
-        if (!timerStarted || timeLeft <= 0) return null;
+        if (!endTime || timeLeft <= 0) return null;
         const m = Math.floor(timeLeft / 60);
         const s = timeLeft % 60;
         const urgent = timeLeft <= 10;
@@ -139,13 +170,13 @@ export const Lobby = () => {
     };
 
     const NavButtons = () => (
-        <div className="fixed bottom-4 right-4 z-50 flex gap-2">
+        <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 flex gap-2 bg-black/60 backdrop-blur-3xl p-1.5 rounded-full border border-white/10 shadow-2xl w-max max-w-[95vw]">
             <button onClick={() => socket?.emit('return_to_lobby', { roomCode })}
-                className="bg-white/5 hover:bg-white/15 text-white/50 hover:text-white px-4 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider border border-white/10 backdrop-blur-sm transition-all hover:scale-105">
+                className="bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 md:px-5 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
                 🏠 Lobiye Dön
             </button>
             <button onClick={() => socket?.emit('restart_round', { roomCode })}
-                className="bg-brand-pink/10 hover:bg-brand-pink/25 text-brand-pink px-4 py-2.5 rounded-xl text-[11px] font-bold uppercase tracking-wider border border-brand-pink/20 backdrop-blur-sm transition-all hover:scale-105">
+                className="bg-brand-pink/10 hover:bg-brand-pink/25 text-brand-pink px-4 md:px-5 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
                 🔄 Yeniden Başlat
             </button>
         </div>
@@ -187,6 +218,34 @@ export const Lobby = () => {
             )}
         </AnimatePresence>
     );
+
+    // ══════════════════════════════════════════════════════════════════════
+    // ─── GRAND WINNER ───────────────────────────────────────────────────
+    // ══════════════════════════════════════════════════════════════════════
+    if (phase === 'grand_winner' && grandWinnerData) {
+        return (
+            <div className="flex flex-col items-center justify-center min-h-screen text-center p-6 bg-brand-cyan/10">
+                <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.6 }} className="max-w-xl w-full">
+                    <div className="text-[clamp(5rem,15vw,8rem)] mb-2 leading-none">🏆</div>
+                    <h1 className="text-[clamp(2.5rem,8vw,4.5rem)] font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan to-brand-pink mb-4 uppercase tracking-tighter">
+                        ŞAMPİYON
+                    </h1>
+                    <h2 className="text-3xl text-white font-bold mb-6">{grandWinnerData.winnerName}</h2>
+                    <NeonCard className="mb-8">
+                        <p className="text-white/40 uppercase tracking-widest text-xs mb-2">Ulaşılan Skor</p>
+                        <p className="text-5xl font-mono font-bold text-brand-cyan">{grandWinnerData.score}</p>
+                    </NeonCard>
+
+                    {isHost && (
+                        <Button size="xl" className="w-full text-xl" onClick={() => socket?.emit('restart_round', { roomCode })}>
+                            🔄 Yeni Oyun Başlat
+                        </Button>
+                    )}
+                </motion.div>
+                <NavButtons />
+            </div>
+        );
+    }
 
     // ══════════════════════════════════════════════════════════════════════
     // ─── ROUND SUMMARY ──────────────────────────────────────────────────
@@ -270,7 +329,20 @@ export const Lobby = () => {
                             </div>
                         </NeonCard>
                     )}
-                    <Button size="xl" onClick={() => navigate('/')} className="px-12 text-xl">🏠 Ana Menüye Dön</Button>
+                    <div className="flex gap-3 flex-wrap justify-center">
+                        {isHost && (
+                            <motion.div whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }}>
+                                <Button size="xl" className="px-12 py-5 text-xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
+                                    onClick={() => socket?.emit('next_round', { roomCode })}>
+                                    ▶️ Yeni Tur
+                                </Button>
+                            </motion.div>
+                        )}
+                        <Button size="xl" variant="secondary" className="px-8 py-5 text-lg"
+                            onClick={() => socket?.emit('return_to_lobby', { roomCode })}>
+                            🏠 Lobiye Dön
+                        </Button>
+                    </div>
                 </motion.div>
             </div>
         );
@@ -283,6 +355,8 @@ export const Lobby = () => {
         return (
             <div className="flex flex-col items-center justify-center min-h-screen p-6">
                 <SabotageInputPhase roomCode={roomCode!} roundId={roundId} targetWord={targetWord || '?'} />
+                <NavButtons />
+                <ToastOverlay />
             </div>
         );
     }
@@ -298,6 +372,8 @@ export const Lobby = () => {
                         {myRole === 'guesser' && <p className="mt-3 text-brand-cyan text-sm font-bold">Rolün: 🔍 Tahminci</p>}
                     </NeonCard>
                 </motion.div>
+                <NavButtons />
+                <ToastOverlay />
             </div>
         );
     }
@@ -308,7 +384,7 @@ export const Lobby = () => {
     if (phase === 'narration') {
         // ── Narrator: timer select then describe ─────────────────────────
         if (myRole === 'narrator') {
-            if (!timerStarted) {
+            if (!endTime) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen p-6 text-center">
                         <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
@@ -459,12 +535,27 @@ export const Lobby = () => {
     // ─── LOBBY ───────────────────────────────────────────────────────────
     // ══════════════════════════════════════════════════════════════════════
     return (
-        <div className="flex flex-col items-center min-h-screen p-6 pt-16 relative">
-            <LanguageToggle />
+        <div className="flex flex-col items-center min-h-[100dvh] p-4 md:p-6 relative pt-24 pb-[calc(100px+env(safe-area-inset-bottom))]">
+            <div className="absolute top-0 left-0 right-0 p-4 md:p-6 flex justify-between items-center z-50 pt-[calc(1rem+env(safe-area-inset-top))]">
+                <button
+                    onClick={() => navigate('/')}
+                    className="bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-wider border border-white/5 transition-all backdrop-blur-xl min-h-[44px] flex items-center shadow-lg"
+                >
+                    🔙 Odadan Çık
+                </button>
+                <LanguageToggle />
+            </div>
 
-            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-10">
+            <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="text-center mb-8 md:mb-10 w-full">
                 <p className="text-white/30 uppercase tracking-[0.4em] font-bold text-xs mb-2">{t('roomCode')}</p>
-                <h1 className="text-6xl md:text-8xl font-black font-mono tracking-widest text-transparent bg-clip-text bg-gradient-to-br from-brand-cyan via-blue-400 to-purple-500">
+                <h1
+                    onClick={() => {
+                        navigator.clipboard.writeText(roomCode || '');
+                        showToast('correct', '📋 Oda Kodu Kopyalandı!', 2000);
+                    }}
+                    className="text-[clamp(3.5rem,12vw,7rem)] font-black font-mono tracking-widest text-transparent bg-clip-text bg-gradient-to-br from-brand-cyan via-blue-400 to-purple-500 cursor-pointer hover:opacity-80 transition-opacity break-all px-2"
+                    title="Kopyalamak için tıkla"
+                >
                     {roomCode}
                 </h1>
             </motion.div>
@@ -498,18 +589,48 @@ export const Lobby = () => {
                 </NeonCard>
 
                 <div className="flex flex-col gap-5">
-                    <NeonCard variant="secondary" className="flex-grow flex flex-col justify-center text-center">
-                        <h3 className="text-lg font-bold mb-2">{t('rulesTitle')}</h3>
-                        <p className="text-white/60 text-sm leading-relaxed">{t('rulesText1')}</p>
-                        <p className="text-white/40 text-xs mt-2">{t('rulesText2')}</p>
-                    </NeonCard>
+                    {isHost ? (
+                        <NeonCard className="flex flex-col gap-4 text-left">
+                            <h3 className="text-sm font-bold text-brand-cyan uppercase tracking-widest">⚙️ Oyun Ayarları</h3>
+
+                            <div>
+                                <label className="text-xs text-white/50 mb-1 block">Kelime Kategorisi</label>
+                                <select className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50 text-white"
+                                    value={category} onChange={e => setCategory(e.target.value)}>
+                                    <option value="Rastgele">🎲 Rastgele (Karışık)</option>
+                                    <option value="Animals & Nature">🦁 Hayvanlar ve Doğa</option>
+                                    <option value="Movies & Series">🎬 Filmler ve Diziler</option>
+                                    <option value="Technology & Science">💻 Teknoloji ve Bilim</option>
+                                    <option value="Everyday Objects">🪑 Günlük Eşyalar</option>
+                                    <option value="History & Culture">🏛️ Tarih ve Kültür</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="text-xs text-white/50 mb-1 block">Hedef Skor (Kazanma Sınırı)</label>
+                                <select className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-brand-cyan/50 text-white"
+                                    value={targetScore || 'Endless'} onChange={e => setTargetScore(e.target.value === 'Endless' ? null : Number(e.target.value))}>
+                                    <option value="Endless">♾️ Sonsuz Döngü (Limit Yok)</option>
+                                    <option value="50">🏆 50 Puan</option>
+                                    <option value="100">🏆 100 Puan</option>
+                                    <option value="150">🏆 150 Puan</option>
+                                </select>
+                            </div>
+                        </NeonCard>
+                    ) : (
+                        <NeonCard variant="secondary" className="flex-grow flex flex-col justify-center text-center">
+                            <h3 className="text-lg font-bold mb-2">{t('rulesTitle')}</h3>
+                            <p className="text-white/60 text-sm leading-relaxed">{t('rulesText1')}</p>
+                            <p className="text-white/40 text-xs mt-2">{t('rulesText2')}</p>
+                        </NeonCard>
+                    )}
 
                     {isHost ? (
                         <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
                             <Button size="xl" className="w-full py-7 text-2xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
                                 onClick={() => {
                                     if (players.length < 1) { alert(t('needPlayersAlert')); return; }
-                                    socket?.emit('start_game', { roomCode, language });
+                                    socket?.emit('start_game', { roomCode, language, category, targetScore });
                                 }}
                                 disabled={players.length < 1}>
                                 🎮 {t('startGame')}

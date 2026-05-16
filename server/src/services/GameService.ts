@@ -52,7 +52,7 @@ export class GameService {
         return players.map((p: any) => ({ id: p.user.id, name: p.user.username, score: p.score }));
     }
 
-    static async startRound(roomCode: string, language: string = 'en') {
+    static async startRound(roomCode: string, language: string = 'en', category: string = 'Random') {
         const room = await prisma.room.findUnique({
             where: { roomCode },
             include: { players: true, rounds: true }
@@ -68,8 +68,8 @@ export class GameService {
         const saboteur = players.length > 1 ? shuffled[1] : null; // Saboteur also gets the target word
         const guessers = players.length > 2 ? shuffled.slice(2) : []; // Everyone else guesses
 
-        // Generate Word via Gemini in the chosen language
-        const words = await AIService.generateTargetWords("Everyday Objects", "Medium", language);
+        // Generate Word via Gemini in the chosen language and category
+        const words = await AIService.generateTargetWords(category, "Hard", language);
         const targetWord = words[Math.floor(Math.random() * words.length)];
 
         // Create Round

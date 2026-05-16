@@ -27,13 +27,18 @@ export class AIService {
             'History & Culture', 'Music & Art', 'Travel & Places', 'Professions & Jobs',
             'Household Items', 'Fantasy & Mythology', 'Vehicles & Transport', 'Space & Astronomy'
         ];
-        const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+        
+        let selectedCategory = category;
+        if (!category || category === 'Random' || category === 'Rastgele') {
+            selectedCategory = categories[Math.floor(Math.random() * categories.length)];
+        }
+
         const langName = language === 'tr' ? 'Turkish' : 'English';
 
         const prompt = `You are a creative word game designer. Generate 12 unique, challenging words for a party word-guessing game.
 
 Rules:
-- Category: "${randomCategory}"
+- Category: "${selectedCategory}"
 - Language: ALL words MUST be in ${langName}
 - Difficulty: Hard — pick words that are fun to describe but NOT obvious
 - Words should be specific nouns (not abstract concepts)
