@@ -11,7 +11,8 @@
 
 @layer base {
     @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800;900&display=swap');
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700;800&display=swap');
 
     :root {
         --background: #120A17;
@@ -61,6 +62,16 @@
         0% { transform: scale(1); }
         50% { transform: scale(1.1) translate(-10px, 15px); }
         100% { transform: scale(1.05) translate(10px, -10px); }
+    }
+
+    /* Hide default cursor on desktop only when custom cursor is active */
+    @media (hover: hover) {
+        * { cursor: none !important; }
+    }
+
+    /* Mono font for codes and scores */
+    .font-mono {
+        font-family: 'JetBrains Mono', 'Courier New', monospace;
     }
 
     h1,

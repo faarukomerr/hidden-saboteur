@@ -10,6 +10,8 @@ import { useLanguage } from '../lib/i18n';
 import { LanguageToggle } from '../components/ui/LanguageToggle';
 import confetti from 'canvas-confetti';
 import { playSound } from '../lib/utils';
+import { Trophy, Settings, Users, Gamepad2, ArrowLeft, RotateCcw, Home, Clock, AlertCircle } from 'lucide-react';
+import { TextReveal } from '../components/ui/TextReveal';
 
 interface Player { id: string; name: string; score: number; }
 interface ScoreEntry { name: string; socketId: string; points: number; }
@@ -172,12 +174,12 @@ export const Lobby = () => {
     const NavButtons = () => (
         <div className="fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 z-50 flex gap-2 bg-black/60 backdrop-blur-3xl p-1.5 rounded-full border border-white/10 shadow-2xl w-max max-w-[95vw]">
             <button onClick={() => socket?.emit('return_to_lobby', { roomCode })}
-                className="bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 md:px-5 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
-                🏠 Lobiye Dön
+                className="flex items-center gap-2 bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 md:px-6 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
+                <Home className="w-4 h-4" /> Lobiye Dön
             </button>
             <button onClick={() => socket?.emit('restart_round', { roomCode })}
-                className="bg-brand-pink/10 hover:bg-brand-pink/25 text-brand-pink px-4 md:px-5 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
-                🔄 Yeniden Başlat
+                className="flex items-center gap-2 bg-brand-pink/10 hover:bg-brand-pink/25 text-brand-pink px-4 md:px-6 py-3 rounded-full text-[10px] md:text-[11px] font-bold uppercase tracking-wider transition-all min-h-[44px]">
+                <RotateCcw className="w-4 h-4" /> Yeniden Başlat
             </button>
         </div>
     );
@@ -224,21 +226,21 @@ export const Lobby = () => {
     // ══════════════════════════════════════════════════════════════════════
     if (phase === 'grand_winner' && grandWinnerData) {
         return (
-            <div className="flex flex-col items-center justify-center min-h-screen text-center p-6 bg-brand-cyan/10">
-                <motion.div initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.6 }} className="max-w-xl w-full">
-                    <div className="text-[clamp(5rem,15vw,8rem)] mb-2 leading-none">🏆</div>
-                    <h1 className="text-[clamp(2.5rem,8vw,4.5rem)] font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan to-brand-pink mb-4 uppercase tracking-tighter">
-                        ŞAMPİYON
-                    </h1>
-                    <h2 className="text-3xl text-white font-bold mb-6">{grandWinnerData.winnerName}</h2>
+            <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-6 bg-brand-cyan/5">
+                <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.4 }} className="max-w-xl w-full flex flex-col items-center">
+                    <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="mb-4">
+                        <Trophy className="w-24 h-24 md:w-32 md:h-32 text-brand-cyan drop-shadow-[0_0_30px_rgba(0,240,255,0.6)]" />
+                    </motion.div>
+                    <TextReveal text="ŞAMPİYON" className="text-[clamp(3rem,8vw,5rem)] font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan to-brand-pink mb-4 uppercase tracking-tighter" />
+                    <motion.h2 initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.6 }} className="text-4xl text-white font-bold mb-8">{grandWinnerData.winnerName}</motion.h2>
                     <NeonCard className="mb-8">
                         <p className="text-white/40 uppercase tracking-widest text-xs mb-2">Ulaşılan Skor</p>
                         <p className="text-5xl font-mono font-bold text-brand-cyan">{grandWinnerData.score}</p>
                     </NeonCard>
 
                     {isHost && (
-                        <Button size="xl" className="w-full text-xl" onClick={() => socket?.emit('restart_round', { roomCode })}>
-                            🔄 Yeni Oyun Başlat
+                        <Button size="xl" className="w-full text-xl flex items-center justify-center gap-3 mt-4" onClick={() => socket?.emit('restart_round', { roomCode })}>
+                            <RotateCcw className="w-6 h-6" /> Yeni Oyun Başlat
                         </Button>
                     )}
                 </motion.div>
@@ -255,17 +257,19 @@ export const Lobby = () => {
         const isGuess = summaryData.reason === 'guess';
         return (
             <div className="flex flex-col items-center justify-center min-h-screen text-center p-6">
-                <motion.div initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.5 }}>
-                    <div className="text-[100px] leading-none mb-4">{isGuess ? '🎉' : '⏱️'}</div>
-                    <h1 className="text-4xl md:text-5xl font-black mb-3">
+                <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', bounce: 0.4 }} className="flex flex-col items-center">
+                    <div className="mb-6">
+                        {isGuess ? <Trophy className="w-20 h-20 text-green-400 drop-shadow-[0_0_20px_rgba(74,222,128,0.5)]" /> : <Clock className="w-20 h-20 text-brand-pink drop-shadow-[0_0_20px_rgba(255,0,85,0.5)]" />}
+                    </div>
+                    <h1 className="text-4xl md:text-5xl font-black mb-4">
                         {isGuess ? (
-                            <span className="text-green-400">{summaryData.winnerName} Doğru Bildi!</span>
+                            <TextReveal text={`${summaryData.winnerName} Doğru Bildi!`} className="text-green-400" />
                         ) : (
-                            <span className="text-brand-cyan">Süre Doldu!</span>
+                            <TextReveal text="Süre Doldu!" className="text-brand-pink" />
                         )}
                     </h1>
-                    <p className="text-white/50 text-xl mb-8">
-                        Kelime: <span className="text-brand-pink font-bold">{summaryData.targetWord}</span>
+                    <p className="text-white/50 text-xl md:text-2xl mb-8 flex items-center justify-center gap-2">
+                        Kelime: <span className="text-white font-black tracking-widest">{summaryData.targetWord}</span>
                     </p>
 
                     {/* Inline scoreboard */}
@@ -539,9 +543,9 @@ export const Lobby = () => {
             <div className="absolute top-0 left-0 right-0 p-4 md:p-6 flex justify-between items-center z-50 pt-[calc(1rem+env(safe-area-inset-top))]">
                 <button
                     onClick={() => navigate('/')}
-                    className="bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 py-3 rounded-xl text-xs font-bold uppercase tracking-wider border border-white/5 transition-all backdrop-blur-xl min-h-[44px] flex items-center shadow-lg"
+                    className="bg-white/5 hover:bg-white/15 text-white/70 hover:text-white px-4 py-3 rounded-2xl text-xs font-bold uppercase tracking-wider border border-white/10 transition-all backdrop-blur-xl min-h-[48px] flex items-center gap-2 shadow-lg"
                 >
-                    🔙 Odadan Çık
+                    <ArrowLeft className="w-4 h-4" /> Odadan Çık
                 </button>
                 <LanguageToggle />
             </div>
@@ -560,85 +564,98 @@ export const Lobby = () => {
                 </h1>
             </motion.div>
 
-            <div className="w-full max-w-2xl grid gap-5 md:grid-cols-2">
+            <div className="w-full max-w-5xl grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-12 mt-8">
                 {/* Player list with scores */}
-                <NeonCard>
-                    <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-lg font-bold uppercase tracking-wider">{t('players')}</h2>
-                        <span className="bg-brand-cyan/15 text-brand-cyan px-3 py-1 rounded-full text-xs font-bold">{players.length}/8</span>
+                <NeonCard className="md:col-span-7 flex flex-col h-full min-h-[400px]">
+                    <div className="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
+                        <div className="flex items-center gap-3 text-brand-cyan">
+                            <Users className="w-5 h-5" />
+                            <h2 className="text-sm font-bold uppercase tracking-widest">{t('players')}</h2>
+                        </div>
+                        <span className="bg-brand-cyan/15 text-brand-cyan px-4 py-1.5 rounded-full text-xs font-black tracking-widest">{players.length}/8</span>
                     </div>
-                    <motion.div className="space-y-2" variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } }} initial="hidden" animate="show">
+                    <motion.div className="space-y-3" variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } }} initial="hidden" animate="show">
                         <AnimatePresence>
                             {players.map((p, idx) => {
                                 const sc = scores.find(s => s.name === p.name);
                                 const pts = sc ? sc.points : 0;
                                 return (
                                     <motion.div key={p.name + idx} variants={{ hidden: { opacity: 0, y: 20, scale: 0.95 }, show: { opacity: 1, y: 0, scale: 1 } }} exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
-                                        className="flex items-center justify-between bg-black/40 border border-white/5 rounded-xl px-4 py-3 hover:border-brand-cyan/30 transition-all hover:bg-white/5 backdrop-blur-md">
-                                        <span className="font-semibold text-sm">
+                                        className="flex items-center justify-between bg-white/5 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 hover:border-brand-cyan/40 transition-all hover:bg-white/10 backdrop-blur-md shadow-[inset_0_2px_10px_rgba(0,0,0,0.2)]">
+                                        <span className="font-bold text-sm tracking-wide">
                                             {p.name}
-                                            {p.name === username && <span className="text-brand-cyan ml-1.5 text-xs px-2 py-0.5 bg-brand-cyan/10 rounded-md">{t('you')}</span>}
+                                            {p.name === username && <span className="text-brand-cyan ml-2 text-[10px] px-2 py-1 bg-brand-cyan/10 rounded-md tracking-widest uppercase">{t('you')}</span>}
                                         </span>
-                                        <span className="text-brand-cyan font-mono font-bold text-sm bg-brand-cyan/5 px-2 py-1 rounded-md">{pts} pt</span>
+                                        <span className="text-brand-cyan font-mono font-black text-sm bg-brand-cyan/10 px-3 py-1.5 rounded-lg shadow-inner">{pts} pt</span>
                                     </motion.div>
                                 );
                             })}
                         </AnimatePresence>
-                        {players.length === 0 && <p className="p-6 text-center text-white/20 italic text-sm">{t('waitingPlayers')}</p>}
+                        {players.length === 0 && (
+                            <div className="flex flex-col items-center justify-center py-10 opacity-50">
+                                <Users className="w-12 h-12 mb-4" />
+                                <p className="text-center italic text-sm">{t('waitingPlayers')}</p>
+                            </div>
+                        )}
                     </motion.div>
                 </NeonCard>
 
-                <div className="flex flex-col gap-5">
+                <div className="md:col-span-5 flex flex-col gap-4 md:gap-6">
                     {isHost ? (
-                        <NeonCard className="flex flex-col gap-4 text-left">
-                            <h3 className="text-sm font-bold text-brand-cyan uppercase tracking-widest">⚙️ Oyun Ayarları</h3>
-
-                            <div>
-                                <label className="text-[11px] text-white/50 mb-1.5 block font-bold uppercase tracking-widest">Kelime Kategorisi</label>
-                                <select className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:border-brand-cyan/50 focus:ring-2 focus:ring-brand-cyan/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/5 shadow-inner"
-                                    value={category} onChange={e => setCategory(e.target.value)}>
-                                    <option value="Rastgele">🎲 Rastgele (Karışık)</option>
-                                    <option value="Animals & Nature">🦁 Hayvanlar ve Doğa</option>
-                                    <option value="Movies & Series">🎬 Filmler ve Diziler</option>
-                                    <option value="Technology & Science">💻 Teknoloji ve Bilim</option>
-                                    <option value="Everyday Objects">🪑 Günlük Eşyalar</option>
-                                    <option value="History & Culture">🏛️ Tarih ve Kültür</option>
-                                </select>
+                        <NeonCard className="flex flex-col gap-5 text-left h-full">
+                            <div className="flex items-center gap-3 text-brand-pink border-b border-white/10 pb-4 mb-2">
+                                <Settings className="w-5 h-5" />
+                                <h3 className="text-sm font-bold uppercase tracking-widest">Oyun Ayarları</h3>
                             </div>
 
-                            <div>
-                                <label className="text-[11px] text-white/50 mb-1.5 block font-bold uppercase tracking-widest">Hedef Skor (Kazanma Sınırı)</label>
-                                <select className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm outline-none focus:border-brand-cyan/50 focus:ring-2 focus:ring-brand-cyan/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/5 shadow-inner"
-                                    value={targetScore || 'Endless'} onChange={e => setTargetScore(e.target.value === 'Endless' ? null : Number(e.target.value))}>
-                                    <option value="Endless">♾️ Sonsuz Döngü (Limit Yok)</option>
-                                    <option value="50">🏆 50 Puan</option>
-                                    <option value="100">🏆 100 Puan</option>
-                                    <option value="150">🏆 150 Puan</option>
-                                </select>
+                            <div className="space-y-4 flex-grow">
+                                <div>
+                                    <label className="text-[10px] text-white/50 mb-2 block font-black uppercase tracking-widest">Kelime Kategorisi</label>
+                                    <select className="w-full bg-black/40 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 text-sm outline-none focus:border-brand-cyan/50 focus:ring-4 focus:ring-brand-cyan/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/10 shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
+                                        value={category} onChange={e => setCategory(e.target.value)}>
+                                        <option value="Rastgele">🎲 Rastgele (Karışık)</option>
+                                        <option value="Animals & Nature">🦁 Hayvanlar ve Doğa</option>
+                                        <option value="Movies & Series">🎬 Filmler ve Diziler</option>
+                                        <option value="Technology & Science">💻 Teknoloji ve Bilim</option>
+                                        <option value="Everyday Objects">🪑 Günlük Eşyalar</option>
+                                        <option value="History & Culture">🏛️ Tarih ve Kültür</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] text-white/50 mb-2 block font-black uppercase tracking-widest">Hedef Skor</label>
+                                    <select className="w-full bg-black/40 border-t-white/10 border-l-white/5 border-white/5 rounded-2xl px-5 py-4 text-sm outline-none focus:border-brand-pink/50 focus:ring-4 focus:ring-brand-pink/20 text-white transition-all appearance-none cursor-pointer hover:bg-white/10 shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)]"
+                                        value={targetScore || 'Endless'} onChange={e => setTargetScore(e.target.value === 'Endless' ? null : Number(e.target.value))}>
+                                        <option value="Endless">♾️ Sonsuz Döngü</option>
+                                        <option value="50">🏆 50 Puan</option>
+                                        <option value="100">🏆 100 Puan</option>
+                                        <option value="150">🏆 150 Puan</option>
+                                    </select>
+                                </div>
                             </div>
                         </NeonCard>
                     ) : (
-                        <NeonCard variant="secondary" className="flex-grow flex flex-col justify-center text-center">
-                            <h3 className="text-lg font-bold mb-2">{t('rulesTitle')}</h3>
+                        <NeonCard variant="secondary" className="flex-grow flex flex-col justify-center items-center text-center p-8">
+                            <AlertCircle className="w-10 h-10 text-brand-cyan mb-4 opacity-50" />
+                            <h3 className="text-lg font-bold mb-3 uppercase tracking-widest">{t('rulesTitle')}</h3>
                             <p className="text-white/60 text-sm leading-relaxed">{t('rulesText1')}</p>
-                            <p className="text-white/40 text-xs mt-2">{t('rulesText2')}</p>
+                            <p className="text-white/40 text-[10px] mt-4 uppercase tracking-widest">{t('rulesText2')}</p>
                         </NeonCard>
                     )}
 
                     {isHost ? (
-                        <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                            <Button size="xl" className="w-full py-7 text-2xl shadow-[0_0_30px_rgba(0,240,255,0.3)]"
-                                onClick={() => {
-                                    if (players.length < 1) { alert(t('needPlayersAlert')); return; }
-                                    socket?.emit('start_game', { roomCode, language, category, targetScore });
-                                }}
-                                disabled={players.length < 1}>
-                                🎮 {t('startGame')}
-                            </Button>
-                        </motion.div>
+                        <Button size="xl" className="w-full shadow-[0_15px_40px_rgba(0,240,255,0.4)] flex items-center justify-center gap-3 group"
+                            onClick={() => {
+                                if (players.length < 1) { alert(t('needPlayersAlert')); return; }
+                                socket?.emit('start_game', { roomCode, language, category, targetScore });
+                            }}
+                            disabled={players.length < 1}>
+                            <Gamepad2 className="w-6 h-6 group-hover:scale-110 transition-transform" />
+                            {t('startGame')}
+                        </Button>
                     ) : (
-                        <NeonCard className="text-center py-5">
-                            <p className="text-white/40 animate-pulse text-sm">{t('waitingHost')}</p>
+                        <NeonCard className="text-center py-6 border-brand-cyan/20">
+                            <p className="text-brand-cyan animate-pulse text-xs font-bold uppercase tracking-widest">{t('waitingHost')}</p>
                         </NeonCard>
                     )}
                 </div>
