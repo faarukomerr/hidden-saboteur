@@ -18,7 +18,7 @@ import { playSound } from '../lib/utils';
 import {
     Trophy, Settings, Users, Gamepad2, ArrowLeft, RotateCcw,
     Home, Clock, AlertCircle, Cog, Star, Zap,
-    MessageSquare, QrCode, X, Send,
+    MessageSquare, QrCode, X, Send, UserX, CheckCircle,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,7 +26,8 @@ interface Player { id: string; name: string; score: number; }
 interface ScoreEntry { name: string; socketId: string; points: number; }
 interface ScorePopupItem { id: string; points: number; }
 interface ChatMsg { name: string; message: string; timestamp: number; }
-type Phase = 'lobby' | 'sabotage_input' | 'narration' | 'round_summary' | 'game_over' | 'grand_winner';
+interface FlyingEmoji { id: string; emoji: string; x: number; name: string; }
+type Phase = 'lobby' | 'sabotage_input' | 'narration' | 'voting' | 'round_summary' | 'game_over' | 'grand_winner';
 
 const COLORS = [
     { main: '#00F0FF', bg: 'rgba(0,240,255,0.08)', border: 'rgba(0,240,255,0.22)' },
@@ -47,6 +48,8 @@ function playerColor(name: string) {
 
 const vibrate = (p: number | number[]) => { try { navigator.vibrate?.(p); } catch (_) {} };
 
+const EMOJI_OPTIONS = ['👏', '🔥', '😱', '💀', '🎉'];
+
 // ─── Component ────────────────────────────────────────────────────────────────
 export const Lobby = () => {
     const { id: roomCode } = useParams<{ id: string }>();
@@ -54,7 +57,7 @@ export const Lobby = () => {
     const navigate = useNavigate();
     const { socket, isConnected } = useSocket();
     const username = searchParams.get('user');
-    const isHost = searchParams.get('host') === 'true';
+    const isHostParam = searchParams.get('host') === 'true';
     const password = searchParams.get('pwd') || undefined;
     const { t, language } = useLanguage();
 
@@ -67,6 +70,7 @@ export const Lobby = () => {
     const [grandWinnerData, setGrandWinnerData] = useState<any>(null);
     const [targetWord, setTargetWord] = useState<string | null>(null);
     const [roundId, setRoundId] = useState('');
+    const [roundCount, setRoundCount] = useState(0);
     const [timeLeft, setTimeLeft] = useState(0);
     const [endTime, setEndTime] = useState<number | null>(null);
     const [totalTime, setTotalTime] = useState(120);
@@ -79,6 +83,17 @@ export const Lobby = () => {
     const [commentary, setCommentary] = useState<string | null>(null);
     const [scores, setScores] = useState<ScoreEntry[]>([]);
     const [summaryData, setSummaryData] = useState<{ targetWord: string; winnerName: string; reason: string } | null>(null);
+    const [isActuallyHost, setIsActuallyHost] = useState(isHostParam);
+
+    // ── Voting state ──────────────────────────────────────────────────────────
+    const [votingPlayers, setVotingPlayers] = useState<string[]>([]);
+    const [myVote, setMyVote] = useState<string | null>(null);
+    const [voteResults, setVoteResults] = useState<{ saboteurNames: string[]; correctVoters: string[] } | null>(null);
+    const [votingTimeLeft, setVotingTimeLeft] = useState(15);
+    const [voterNames, setVoterNames] = useState<string[]>([]);
+
+    // ── Emoji reactions ───────────────────────────────────────────────────────
+    const [flyingEmojis, setFlyingEmojis] = useState<FlyingEmoji[]>([]);
 
     // ── Overlay state ─────────────────────────────────────────────────────────
     const [roleRevealData, setRoleRevealData] = useState<{ role: 'narrator' | 'saboteur' | 'guesser'; targetWord: string | null } | null>(null);
@@ -97,6 +112,9 @@ export const Lobby = () => {
 
     // ── QR state ──────────────────────────────────────────────────────────────
     const [isQrOpen, setIsQrOpen] = useState(false);
+
+    // ── Sound tracking ────────────────────────────────────────────────────────
+    const urgentSoundedRef = useRef(false);
 
     // ── Grand winner score counter ────────────────────────────────────────────
     useEffect(() => {
@@ -122,6 +140,16 @@ export const Lobby = () => {
         }
     }, [chatMessages, isChatOpen]);
 
+    // ── Voting countdown ──────────────────────────────────────────────────────
+    useEffect(() => {
+        if (phase !== 'voting') return;
+        setVotingTimeLeft(15);
+        const id = setInterval(() => {
+            setVotingTimeLeft(t => Math.max(0, t - 1));
+        }, 1000);
+        return () => clearInterval(id);
+    }, [phase]);
+
     // ── Round reset ───────────────────────────────────────────────────────────
     const resetRoundState = useCallback(() => {
         setMyRole(null); setTargetWord(null); setRoundId('');
@@ -129,6 +157,9 @@ export const Lobby = () => {
         setSaboteurWords([]); setSelectedWord(null);
         setGuessesLeft(3); setGuessInput(''); setWrongGuesses([]);
         setToast(null); setCommentary(null);
+        setVotingPlayers([]); setMyVote(null); setVoteResults(null);
+        setVoterNames([]); setVotingTimeLeft(15);
+        urgentSoundedRef.current = false;
     }, []);
 
     // ── Socket handlers ───────────────────────────────────────────────────────
@@ -149,10 +180,12 @@ export const Lobby = () => {
         socket.on('phase_changed', (d: { phase: any }) => setPhase(d.phase));
         socket.on('saboteur_words_list', (d: { words: string[] }) => setSaboteurWords(d.words));
         socket.on('sabotage_words_saved', (d: { words: string[] }) => setSaboteurWords(d.words || []));
+        socket.on('round_info', (d: { roundCount: number }) => setRoundCount(d.roundCount));
 
         socket.on('timer_start', (d: { endTime: number; total?: number }) => {
             setEndTime(d.endTime);
             if (d.total) setTotalTime(d.total);
+            urgentSoundedRef.current = false;
         });
 
         socket.on('scores_update', (d: { scores: ScoreEntry[] }) => {
@@ -193,9 +226,7 @@ export const Lobby = () => {
         });
 
         socket.on('guess_result', (d: { guessWord: string; guesserName: string }) => {
-            if (d.guesserName === username) {
-                setWrongGuesses(p => [...p, d.guessWord]);
-            }
+            if (d.guesserName === username) setWrongGuesses(p => [...p, d.guessWord]);
             showToast('wrong', `❌ ${d.guesserName}: "${d.guessWord}" yanlış`, 3000);
         });
 
@@ -213,6 +244,47 @@ export const Lobby = () => {
         socket.on('game_over', () => { setPhase('game_over'); setTimeLeft(0); setEndTime(null); });
         socket.on('force_reset', () => resetRoundState());
 
+        // Voting
+        socket.on('voting_started', (d: { players: string[]; saboteurCount: number }) => {
+            setVotingPlayers(d.players);
+            setMyVote(null);
+            setVoterNames([]);
+            setVoteResults(null);
+        });
+        socket.on('vote_cast', (d: { voterName: string }) => {
+            setVoterNames(p => [...p, d.voterName]);
+        });
+        socket.on('vote_results', (d: { saboteurNames: string[]; correctVoters: string[] }) => {
+            setVoteResults(d);
+            if (d.correctVoters.includes(username || '')) {
+                vibrate([40, 20, 80]);
+                setScorePopups(p => [...p, { id: `vote-${Date.now()}`, points: 5 }]);
+            }
+        });
+
+        // Emoji reactions
+        socket.on('emoji_reaction', (d: { name: string; emoji: string }) => {
+            const id = `${Date.now()}-${Math.random()}`;
+            const x = 10 + Math.random() * 80;
+            setFlyingEmojis(p => [...p, { id, emoji: d.emoji, x, name: d.name }]);
+            setTimeout(() => setFlyingEmojis(p => p.filter(e => e.id !== id)), 2200);
+        });
+
+        // Kick
+        socket.on('kicked', () => {
+            vibrate([100, 50, 200]);
+            navigate('/?kicked=1');
+        });
+
+        // Host promotion
+        socket.on('host_promoted', () => {
+            setIsActuallyHost(true);
+            showToast('correct', '👑 Sen artık oda kurucususun!', 3000);
+        });
+
+        // Room closed
+        socket.on('room_closed', () => navigate('/'));
+
         socket.on('chat_message', (msg: ChatMsg) => {
             setChatMessages(p => [...p, msg]);
             setUnreadCount(c => c + 1);
@@ -224,17 +296,24 @@ export const Lobby = () => {
              'sabotage_words_saved', 'timer_start', 'scores_update', 'sabotage_confirmed',
              'sabotage_failed', 'host_commentary', 'guess_result', 'round_summary',
              'game_over', 'force_reset', 'grand_winner', 'chat_message', 'chat_history',
+             'voting_started', 'vote_cast', 'vote_results', 'emoji_reaction',
+             'kicked', 'host_promoted', 'room_closed', 'round_info',
             ].forEach(e => socket.off(e));
         };
     }, [socket, isConnected, roomCode, username, navigate, password, resetRoundState]);
 
-    // ── Timer tick ────────────────────────────────────────────────────────────
+    // ── Timer tick + 10s sound ────────────────────────────────────────────────
     useEffect(() => {
         if (!endTime) { setTimeLeft(0); return; }
         let frame: number;
         const tick = () => {
             const r = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
             setTimeLeft(r);
+            if (r === 10 && !urgentSoundedRef.current) {
+                urgentSoundedRef.current = true;
+                playSound('tick');
+                vibrate([40, 20, 40]);
+            }
             if (r > 0) frame = requestAnimationFrame(tick);
         };
         tick();
@@ -249,6 +328,17 @@ export const Lobby = () => {
         if (!chatInput.trim()) return;
         socket?.emit('send_chat', { roomCode, message: chatInput.trim() });
         setChatInput('');
+    };
+
+    const sendEmoji = (emoji: string) => {
+        vibrate(12);
+        socket?.emit('react_emoji', { roomCode, emoji });
+    };
+
+    const kickPlayer = (targetUsername: string) => {
+        if (!isActuallyHost) return;
+        vibrate(20);
+        socket?.emit('kick_player', { roomCode, targetUsername });
     };
 
     const shareUrl = `${window.location.origin}/?code=${roomCode}`;
@@ -267,7 +357,6 @@ export const Lobby = () => {
         );
     };
 
-    // Mini scoreboard — right side during gameplay
     const MiniScoreboard = () => {
         if (scores.length === 0) return null;
         return (
@@ -278,6 +367,7 @@ export const Lobby = () => {
             >
                 <p className="text-[8px] text-white/25 font-black uppercase tracking-widest mb-2 flex items-center gap-1">
                     <Trophy className="w-2.5 h-2.5" /> Skor
+                    {roundCount > 0 && <span className="ml-auto text-white/15">T{roundCount}</span>}
                 </p>
                 {scores.slice(0, 4).map((s, i) => (
                     <div key={i} className="flex justify-between items-center gap-1.5 py-0.5">
@@ -291,7 +381,6 @@ export const Lobby = () => {
         );
     };
 
-    // Bottom nav bar — only for host emergency controls
     const NavButtons = () => (
         <div className="fixed left-0 right-0 z-[50] flex justify-center gap-2 px-4"
             style={{ bottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
@@ -314,7 +403,6 @@ export const Lobby = () => {
         </div>
     );
 
-    // Toast notification
     const ToastOverlay = () => (
         <AnimatePresence>
             {toast && (
@@ -352,7 +440,47 @@ export const Lobby = () => {
         </div>
     );
 
-    // Chat panel with keyboard avoidance
+    // Flying emoji overlay
+    const FlyingEmojiOverlay = () => (
+        <div className="fixed inset-0 z-[65] pointer-events-none overflow-hidden">
+            <AnimatePresence>
+                {flyingEmojis.map(e => (
+                    <motion.div key={e.id}
+                        className="absolute bottom-20 flex flex-col items-center"
+                        style={{ left: `${e.x}%` }}
+                        initial={{ y: 0, opacity: 1, scale: 0.5 }}
+                        animate={{ y: -220, opacity: 0, scale: 1.3 }}
+                        exit={{ opacity: 0 }}
+                        transition={{ duration: 2, ease: 'easeOut' }}
+                    >
+                        <span className="text-3xl leading-none drop-shadow-lg">{e.emoji}</span>
+                        <span className="text-[8px] text-white/40 font-bold mt-0.5 whitespace-nowrap">{e.name}</span>
+                    </motion.div>
+                ))}
+            </AnimatePresence>
+        </div>
+    );
+
+    // Emoji reaction bar — shows during game phases
+    const EmojiBar = () => {
+        if (phase === 'lobby' || phase === 'grand_winner') return null;
+        return (
+            <div className="fixed z-[55] flex gap-2"
+                style={{ bottom: 'calc(4.75rem + env(safe-area-inset-bottom))', left: '50%', transform: 'translateX(-50%)' }}>
+                {EMOJI_OPTIONS.map(emoji => (
+                    <motion.button key={emoji}
+                        whileTap={{ scale: 0.75 }}
+                        style={{ touchAction: 'manipulation' }}
+                        onClick={() => sendEmoji(emoji)}
+                        className="bg-black/70 backdrop-blur-xl border border-white/10 rounded-2xl w-11 h-11 flex items-center justify-center text-lg shadow-lg"
+                    >
+                        {emoji}
+                    </motion.button>
+                ))}
+            </div>
+        );
+    };
+
     const ChatPanel = () => (
         <AnimatePresence>
             {isChatOpen && (
@@ -362,10 +490,7 @@ export const Lobby = () => {
                     exit={{ opacity: 0, y: 20, scale: 0.96 }}
                     transition={{ type: 'spring', bounce: 0.15, duration: 0.3 }}
                     className="fixed right-3 left-3 sm:left-auto sm:w-80 z-[55] bg-black/95 backdrop-blur-3xl border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden"
-                    style={{
-                        bottom: 'calc(4.5rem + env(safe-area-inset-bottom))',
-                        maxHeight: '60vh',
-                    }}
+                    style={{ bottom: 'calc(4.5rem + env(safe-area-inset-bottom))', maxHeight: '60vh' }}
                 >
                     <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07]">
                         <div className="flex items-center gap-2">
@@ -378,7 +503,6 @@ export const Lobby = () => {
                             <X className="w-4 h-4" />
                         </button>
                     </div>
-
                     <div className="flex-1 overflow-y-auto p-3 space-y-2 overscroll-contain scroll-smooth-touch">
                         {chatMessages.length === 0
                             ? <p className="text-white/20 text-[10px] text-center py-6 uppercase tracking-widest">Henüz mesaj yok</p>
@@ -399,7 +523,6 @@ export const Lobby = () => {
                         }
                         <div ref={chatEndRef} />
                     </div>
-
                     <div className="p-3 border-t border-white/[0.07] flex gap-2">
                         <input
                             ref={chatInputRef}
@@ -428,7 +551,6 @@ export const Lobby = () => {
         </AnimatePresence>
     );
 
-    // Floating chat button (game phases only)
     const ChatButton = () => (
         <motion.button
             whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.88 }}
@@ -452,7 +574,6 @@ export const Lobby = () => {
         </motion.button>
     );
 
-    // QR modal — full-screen on mobile
     const QrModal = () => (
         <AnimatePresence>
             {isQrOpen && (
@@ -469,9 +590,7 @@ export const Lobby = () => {
                         className="w-full sm:max-w-sm bg-[#120A17] border border-white/10 rounded-t-3xl sm:rounded-3xl p-6 flex flex-col items-center gap-5 shadow-2xl"
                         style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom))' }}
                     >
-                        {/* Handle bar */}
                         <div className="w-10 h-1 rounded-full bg-white/20 sm:hidden" />
-
                         <div className="flex items-center justify-between w-full">
                             <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Odaya Davet Et</span>
                             <button onClick={() => setIsQrOpen(false)}
@@ -480,16 +599,13 @@ export const Lobby = () => {
                                 <X className="w-4 h-4" />
                             </button>
                         </div>
-
                         <div className="p-3 bg-white rounded-2xl shadow-lg">
                             <QRCodeSVG value={shareUrl} size={200} bgColor="#ffffff" fgColor="#120A17" level="M" />
                         </div>
-
                         <div className="text-center">
                             <p className="text-brand-cyan font-black text-3xl tracking-widest mb-1">{roomCode}</p>
                             <p className="text-white/25 text-[10px] uppercase tracking-widest">Oda Kodu</p>
                         </div>
-
                         <motion.button
                             whileTap={{ scale: 0.96 }}
                             style={{ touchAction: 'manipulation' }}
@@ -551,7 +667,7 @@ export const Lobby = () => {
                         </motion.h2>
 
                         <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.85 }} className="mb-8 w-full">
+                            transition={{ delay: 0.85 }} className="mb-6 w-full">
                             <div className="rounded-3xl p-6 text-center" style={{ background: 'rgba(0,240,255,0.06)', border: '1px solid rgba(0,240,255,0.15)' }}>
                                 <p className="text-white/20 uppercase tracking-widest text-[9px] font-black mb-2">Final Skor</p>
                                 <p className="text-[clamp(3.5rem,14vw,6rem)] font-black font-mono text-brand-cyan tabular-nums leading-none"
@@ -561,15 +677,153 @@ export const Lobby = () => {
                             </div>
                         </motion.div>
 
-                        {isHost && (
-                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.1 }} className="w-full">
-                                <Button size="xl" className="w-full flex items-center justify-center gap-3"
-                                    onClick={() => socket?.emit('restart_round', { roomCode })}>
-                                    <RotateCcw className="w-5 h-5" /> Yeni Oyun
-                                </Button>
+                        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1.1 }} className="w-full flex flex-col gap-3">
+                            {isActuallyHost && (
+                                <>
+                                    <Button size="xl" className="w-full flex items-center justify-center gap-3"
+                                        onClick={() => { vibrate(15); socket?.emit('restart_game', { roomCode }); }}>
+                                        <RotateCcw className="w-5 h-5" /> Tekrar Oyna
+                                    </Button>
+                                    <Button size="xl" variant="secondary" className="w-full flex items-center justify-center gap-3"
+                                        onClick={() => { vibrate(8); socket?.emit('next_round', { roomCode }); }}>
+                                        <Zap className="w-5 h-5" /> Skorları Koru &amp; Devam
+                                    </Button>
+                                </>
+                            )}
+                            {!isActuallyHost && (
+                                <motion.p className="text-white/25 text-xs text-center animate-pulse">Kurucuyu bekle...</motion.p>
+                            )}
+                        </motion.div>
+                    </motion.div>
+                </div>
+            );
+        }
+
+        // ── VOTING ────────────────────────────────────────────────────────────
+        if (phase === 'voting') {
+            const isSaboteur = myRole === 'saboteur';
+            const hasVoted = !!myVote;
+
+            return (
+                <div className="flex flex-col items-center min-h-[100dvh] px-4 py-6"
+                    style={{
+                        paddingTop: 'calc(2rem + env(safe-area-inset-top))',
+                        paddingBottom: 'calc(7rem + env(safe-area-inset-bottom))',
+                    }}>
+                    <MiniScoreboard />
+
+                    <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        className="w-full max-w-sm flex flex-col items-center">
+
+                        {/* Header */}
+                        <motion.div className="text-center mb-6">
+                            <div className="text-5xl mb-3">🕵️</div>
+                            <h2 className="text-2xl font-black uppercase tracking-wider text-white mb-1">Kim Sabotajcıydı?</h2>
+                            <p className="text-white/35 text-sm">
+                                {isSaboteur ? 'Sen sabotajcıydın — sonucu bekle' : hasVoted ? 'Oyun bekleniyor...' : 'Tahminini söyle!'}
+                            </p>
+                        </motion.div>
+
+                        {/* Voting timer */}
+                        <AnimatePresence>
+                            {!voteResults && (
+                                <motion.div
+                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                                    className="flex items-center gap-2 mb-5 px-4 py-2 rounded-full border"
+                                    style={{ background: 'rgba(0,0,0,0.4)', borderColor: votingTimeLeft <= 5 ? 'rgba(255,0,85,0.5)' : 'rgba(255,255,255,0.1)' }}
+                                >
+                                    <Clock className="w-3.5 h-3.5" style={{ color: votingTimeLeft <= 5 ? '#FF0055' : 'rgba(255,255,255,0.4)' }} />
+                                    <motion.span
+                                        className="font-mono font-black text-sm"
+                                        animate={votingTimeLeft <= 5 ? { scale: [1, 1.2, 1] } : {}}
+                                        transition={{ duration: 0.5, repeat: votingTimeLeft <= 5 ? Infinity : 0 }}
+                                        style={{ color: votingTimeLeft <= 5 ? '#FF0055' : 'rgba(255,255,255,0.5)' }}
+                                    >
+                                        {votingTimeLeft}s
+                                    </motion.span>
+                                    <span className="text-[9px] text-white/25 uppercase tracking-wider">kaldı</span>
+                                    <span className="ml-auto text-[9px] text-white/25">{voterNames.length} oy</span>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Vote results */}
+                        <AnimatePresence>
+                            {voteResults && (
+                                <motion.div
+                                    initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }}
+                                    className="w-full mb-5 rounded-3xl p-5 text-center"
+                                    style={{ background: 'rgba(255,0,85,0.08)', border: '1px solid rgba(255,0,85,0.3)' }}
+                                >
+                                    <p className="text-[9px] font-black uppercase tracking-widest text-brand-pink/60 mb-2">💀 Sabotajcı</p>
+                                    <p className="text-2xl font-black text-brand-pink mb-3">
+                                        {voteResults.saboteurNames.join(', ')}
+                                    </p>
+                                    {voteResults.correctVoters.length > 0 && (
+                                        <div className="mt-3 pt-3 border-t border-white/10">
+                                            <p className="text-[9px] text-white/30 uppercase tracking-widest mb-2">✅ Doğru Bilenler (+5 pt)</p>
+                                            <p className="text-white/60 text-sm font-bold">{voteResults.correctVoters.join(', ')}</p>
+                                        </div>
+                                    )}
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Player vote buttons */}
+                        {!isSaboteur && !hasVoted && !voteResults && (
+                            <div className="w-full space-y-2">
+                                {votingPlayers
+                                    .filter(p => p !== username)
+                                    .map(playerName => {
+                                        const col = playerColor(playerName);
+                                        return (
+                                            <motion.button key={playerName}
+                                                whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.95 }}
+                                                style={{ touchAction: 'manipulation' }}
+                                                onClick={() => {
+                                                    vibrate(15);
+                                                    setMyVote(playerName);
+                                                    socket?.emit('submit_vote', { roomCode, votedFor: playerName });
+                                                }}
+                                                className="w-full flex items-center gap-3 rounded-2xl px-4 py-4 transition-all"
+                                                style={{ background: col.bg, border: `1px solid ${col.border}` }}
+                                            >
+                                                <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm shrink-0"
+                                                    style={{ background: `${col.main}20`, color: col.main }}>
+                                                    {playerName.slice(0, 2).toUpperCase()}
+                                                </div>
+                                                <span className="font-bold text-white text-base flex-1 text-left">{playerName}</span>
+                                                <UserX className="w-4 h-4 text-white/20" />
+                                            </motion.button>
+                                        );
+                                    })}
+                            </div>
+                        )}
+
+                        {/* After vote */}
+                        {!isSaboteur && hasVoted && !voteResults && (
+                            <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                                className="w-full rounded-3xl p-5 text-center"
+                                style={{ background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)' }}>
+                                <CheckCircle className="w-8 h-8 text-brand-cyan mx-auto mb-2" />
+                                <p className="text-brand-cyan font-bold text-sm mb-1">Oy Verildi</p>
+                                <p className="text-white/40 text-xs">Sabotajcı olarak <span className="text-white font-bold">{myVote}</span> seçtin</p>
+                                <AnimatedDots />
+                            </motion.div>
+                        )}
+
+                        {isSaboteur && !voteResults && (
+                            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                                className="w-full rounded-3xl p-5 text-center"
+                                style={{ background: 'rgba(255,0,85,0.06)', border: '1px solid rgba(255,0,85,0.2)' }}>
+                                <div className="text-4xl mb-2">🕵️</div>
+                                <p className="text-brand-pink font-bold text-sm mb-1">Oyuncular seni arıyor!</p>
+                                <p className="text-white/30 text-xs">Sonuçlar yakında açıklanacak...</p>
+                                <AnimatedDots />
                             </motion.div>
                         )}
                     </motion.div>
+                    <ToastOverlay />
                 </div>
             );
         }
@@ -583,6 +837,10 @@ export const Lobby = () => {
                     <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                         transition={{ type: 'spring', bounce: 0.4 }}
                         className="flex flex-col items-center w-full max-w-sm">
+
+                        {roundCount > 0 && (
+                            <p className="text-[9px] text-white/20 font-black uppercase tracking-widest mb-4">Tur {roundCount}</p>
+                        )}
 
                         <motion.div className="mb-6"
                             animate={!isTimeout ? { rotate: [0, -10, 10, -5, 0] } : {}}
@@ -637,9 +895,9 @@ export const Lobby = () => {
                         )}
 
                         <div className="flex gap-3 flex-col w-full">
-                            {isHost && (
+                            {isActuallyHost && (
                                 <Button size="xl" className="w-full flex items-center justify-center gap-2"
-                                    onClick={() => socket?.emit('next_round', { roomCode })}>
+                                    onClick={() => { vibrate(12); socket?.emit('next_round', { roomCode }); }}>
                                     <Zap className="w-5 h-5" /> Sonraki Tur
                                 </Button>
                             )}
@@ -647,7 +905,7 @@ export const Lobby = () => {
                                 onClick={() => socket?.emit('return_to_lobby', { roomCode })}>
                                 <Home className="w-5 h-5" /> Lobiye Dön
                             </Button>
-                            {!isHost && <p className="text-white/25 text-xs animate-pulse">Kurucuyu bekle...</p>}
+                            {!isActuallyHost && <p className="text-white/25 text-xs animate-pulse">Kurucuyu bekle...</p>}
                         </div>
                     </motion.div>
                 </div>
@@ -700,9 +958,9 @@ export const Lobby = () => {
                         )}
 
                         <div className="flex gap-3 flex-col w-full">
-                            {isHost && (
+                            {isActuallyHost && (
                                 <Button size="xl" className="w-full flex items-center justify-center gap-2"
-                                    onClick={() => socket?.emit('next_round', { roomCode })}>
+                                    onClick={() => { vibrate(12); socket?.emit('next_round', { roomCode }); }}>
                                     <Zap className="w-5 h-5" /> Yeni Tur
                                 </Button>
                             )}
@@ -732,7 +990,6 @@ export const Lobby = () => {
                 );
             }
 
-            // Narrator / guesser waiting
             const isNarrator = myRole === 'narrator';
             const badgeColor = isNarrator ? '#00F0FF' : '#8B5CF6';
             const badgeBg = isNarrator ? 'rgba(0,240,255,0.08)' : 'rgba(139,92,246,0.08)';
@@ -743,7 +1000,6 @@ export const Lobby = () => {
                     style={{ paddingBottom: 'calc(7rem + env(safe-area-inset-bottom))' }}>
                     <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                         className="flex flex-col items-center w-full max-w-xs">
-                        {/* Gear cluster */}
                         <div className="relative w-36 h-36 mb-8">
                             <motion.div animate={{ rotate: 360 }} transition={{ duration: 12, repeat: Infinity, ease: 'linear' }}
                                 style={{ filter: 'drop-shadow(0 0 18px rgba(0,240,255,0.3))' }}>
@@ -754,20 +1010,13 @@ export const Lobby = () => {
                                     <Cog className="w-13 h-13 text-brand-pink/20" strokeWidth={1.4} style={{ width: 52, height: 52 }} />
                                 </motion.div>
                             </div>
-                            <div className="absolute -bottom-1 -left-3">
-                                <motion.div animate={{ rotate: 360 }} transition={{ duration: 4.5, repeat: Infinity, ease: 'linear' }}>
-                                    <Cog className="w-8 h-8 text-brand-cyan/15" strokeWidth={1.5} />
-                                </motion.div>
-                            </div>
                         </div>
-
                         <motion.div
                             className="inline-flex items-center gap-2 px-5 py-2 rounded-full border mb-6 text-[11px] font-black uppercase tracking-widest"
                             style={{ background: badgeBg, borderColor: badgeBorder, color: badgeColor }}
                             initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
                             {isNarrator ? '📢 Anlatıcı' : '🔍 Tahminci'}
                         </motion.div>
-
                         <div className="w-full rounded-3xl p-6 text-center"
                             style={{ background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.07)' }}>
                             <p className="text-white/50 font-black tracking-widest uppercase text-sm mb-2">
@@ -785,7 +1034,6 @@ export const Lobby = () => {
         // ── NARRATION ─────────────────────────────────────────────────────────
         if (phase === 'narration') {
 
-            // Narrator — timer select
             if (myRole === 'narrator' && !endTime) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-[100dvh] px-4 text-center"
@@ -795,15 +1043,12 @@ export const Lobby = () => {
                         }}>
                         <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                             className="flex flex-col items-center w-full max-w-sm">
-
                             <motion.div animate={{ rotate: [0, 360] }} transition={{ duration: 22, repeat: Infinity, ease: 'linear' }}>
                                 <Clock className="w-14 h-14 text-brand-cyan/60 mb-5"
                                     style={{ filter: 'drop-shadow(0 0 20px rgba(0,240,255,0.55))' }} />
                             </motion.div>
-
                             <h2 className="text-[clamp(2rem,8vw,3rem)] font-black text-white uppercase tracking-tight mb-2">Süre Seç</h2>
                             <p className="text-white/30 text-xs mb-9 uppercase tracking-widest">Bu tur için kaç dakikan olsun?</p>
-
                             <div className="grid grid-cols-3 gap-3 w-full mb-8">
                                 {[
                                     { l: '1 dk', s: 60, sub: 'Hızlı', icon: '⚡' },
@@ -816,7 +1061,7 @@ export const Lobby = () => {
                                             vibrate(12);
                                             socket?.emit('set_timer', { roomCode, durationSeconds: opt.s });
                                         }}
-                                        className="flex flex-col items-center py-5 px-2 rounded-3xl transition-all group"
+                                        className="flex flex-col items-center py-5 px-2 rounded-3xl transition-all"
                                         style={{ touchAction: 'manipulation', background: 'rgba(0,240,255,0.05)', border: '1.5px solid rgba(0,240,255,0.12)' }}
                                     >
                                         <span className="text-lg mb-1">{opt.icon}</span>
@@ -825,8 +1070,6 @@ export const Lobby = () => {
                                     </motion.button>
                                 ))}
                             </div>
-
-                            {/* Target word */}
                             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }} className="w-full">
                                 <div className="rounded-3xl p-5 text-center"
                                     style={{ background: 'rgba(0,240,255,0.05)', border: '1px solid rgba(0,240,255,0.15)' }}>
@@ -842,7 +1085,6 @@ export const Lobby = () => {
                 );
             }
 
-            // Narrator — timer running
             if (myRole === 'narrator') {
                 return (
                     <>
@@ -851,7 +1093,7 @@ export const Lobby = () => {
                         <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center px-4"
                             style={{
                                 paddingTop: 'calc(6rem + env(safe-area-inset-top))',
-                                paddingBottom: 'calc(7rem + env(safe-area-inset-bottom))',
+                                paddingBottom: 'calc(8rem + env(safe-area-inset-bottom))',
                             }}>
                             <motion.div initial={{ scale: 0.88, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                                 className="w-full max-w-sm">
@@ -859,8 +1101,6 @@ export const Lobby = () => {
                                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
                                     📢 Sen Anlatıcısın
                                 </motion.p>
-
-                                {/* Word display */}
                                 <motion.div className="rounded-3xl py-8 px-6 mb-5 text-center"
                                     style={{ background: 'rgba(0,240,255,0.05)', border: '1.5px solid rgba(0,240,255,0.18)' }}
                                     animate={{ boxShadow: ['0 0 30px rgba(0,240,255,0.08)', '0 0 50px rgba(0,240,255,0.18)', '0 0 30px rgba(0,240,255,0.08)'] }}
@@ -870,8 +1110,6 @@ export const Lobby = () => {
                                         {targetWord}
                                     </h1>
                                 </motion.div>
-
-                                {/* Warning */}
                                 <motion.div
                                     className="flex items-start gap-3 rounded-2xl p-4 text-left"
                                     style={{ background: 'rgba(255,0,85,0.08)', border: '1px dashed rgba(255,0,85,0.3)' }}
@@ -891,7 +1129,6 @@ export const Lobby = () => {
                 );
             }
 
-            // Saboteur — YANDI trigger view
             if (myRole === 'saboteur') {
                 return (
                     <>
@@ -904,18 +1141,14 @@ export const Lobby = () => {
                             }}>
                             <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                                 className="w-full max-w-sm flex flex-col items-center">
-
                                 <motion.div className="inline-flex items-center gap-2 bg-brand-pink/10 border border-brand-pink/25 px-4 py-2 rounded-full mb-2"
                                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}>
                                     <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-pink">🕵️ Sabotajcı</span>
                                 </motion.div>
-
                                 <p className="text-white/25 text-xs mb-1">
                                     Hedef: <span className="text-brand-pink font-black">{targetWord}</span>
                                 </p>
                                 <p className="text-white/20 text-[10px] mb-6 text-center">Anlatıcı bir kelimeni söylerse seç ve YANDI!</p>
-
-                                {/* Trap word buttons */}
                                 <div className="flex flex-wrap gap-3 justify-center w-full mb-6">
                                     {saboteurWords.length > 0 ? saboteurWords.map((w, i) => (
                                         <motion.button key={i}
@@ -945,7 +1178,7 @@ export const Lobby = () => {
                             </motion.div>
                         </div>
 
-                        {/* YANDI button — pinned to bottom */}
+                        {/* YANDI button pinned to bottom */}
                         <div className="fixed left-4 right-4 z-[45]"
                             style={{ bottom: 'calc(0.75rem + env(safe-area-inset-bottom))' }}>
                             <AnimatePresence>
@@ -963,7 +1196,6 @@ export const Lobby = () => {
                             </AnimatePresence>
                             <motion.button
                                 whileTap={{ scale: selectedWord ? 0.94 : 1 }}
-                                style={{ touchAction: 'manipulation' }}
                                 disabled={!selectedWord}
                                 onClick={() => {
                                     if (selectedWord) {
@@ -973,6 +1205,7 @@ export const Lobby = () => {
                                     }
                                 }}
                                 className="w-full relative rounded-[2rem] overflow-hidden disabled:opacity-35 disabled:cursor-not-allowed"
+                                style={{ touchAction: 'manipulation' }}
                             >
                                 <motion.div
                                     className="absolute inset-0"
@@ -1009,15 +1242,12 @@ export const Lobby = () => {
                         }}>
                         <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                             className="w-full max-w-sm">
-
                             <motion.div className="inline-flex items-center gap-2 bg-brand-cyan/10 border border-brand-cyan/20 px-4 py-2 rounded-full mb-5"
                                 initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
                                 <span className="text-[10px] font-black uppercase tracking-[0.3em] text-brand-cyan">🔍 Tahminci</span>
                             </motion.div>
-
                             <p className="text-white/30 text-sm mb-6">Anlatıcıyı dinle — hedef kelimeyi bul!</p>
 
-                            {/* Lives */}
                             <div className="flex items-center justify-center gap-4 mb-7">
                                 {[1, 2, 3].map(i => (
                                     <motion.div key={i} className="flex flex-col items-center gap-1">
@@ -1035,7 +1265,6 @@ export const Lobby = () => {
                                 <span className="text-white/25 text-xs">{guessesLeft}/3 hak</span>
                             </div>
 
-                            {/* Wrong guesses history */}
                             {wrongGuesses.length > 0 && (
                                 <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
                                     className="flex flex-wrap gap-2 justify-center mb-5">
@@ -1158,7 +1387,7 @@ export const Lobby = () => {
                     </motion.p>
                 </motion.div>
 
-                {/* Main grid — single column on mobile, two-column on md+ */}
+                {/* Main grid */}
                 <div className="w-full max-w-5xl mx-auto flex flex-col md:grid md:grid-cols-12 gap-4">
 
                     {/* Players card */}
@@ -1169,15 +1398,15 @@ export const Lobby = () => {
                                 <h2 className="text-xs font-black uppercase tracking-widest">Oyuncular</h2>
                             </div>
                             <span className="bg-brand-cyan/10 text-brand-cyan px-3 py-1 rounded-full text-[10px] font-black tracking-widest">
-                                {players.length}/8
+                                {players.length}/10
                             </span>
                         </div>
-
                         <div className="space-y-2">
                             <AnimatePresence>
                                 {players.map(p => {
                                     const col = playerColor(p.name);
                                     const pts = scores.find(s => s.name === p.name)?.points ?? 0;
+                                    const canKick = isActuallyHost && p.name !== username;
                                     return (
                                         <motion.div key={p.name}
                                             initial={{ opacity: 0, y: 12, scale: 0.95 }}
@@ -1197,6 +1426,12 @@ export const Lobby = () => {
                                                         sen
                                                     </span>
                                                 )}
+                                                {isActuallyHost && p.name === username && (
+                                                    <span className="text-[9px] ml-1 px-2 py-0.5 rounded-md uppercase tracking-widest font-black text-amber-400/70"
+                                                        style={{ background: 'rgba(245,158,11,0.1)' }}>
+                                                        host
+                                                    </span>
+                                                )}
                                             </span>
                                             {pts > 0 && (
                                                 <motion.span key={pts}
@@ -1205,6 +1440,16 @@ export const Lobby = () => {
                                                     style={{ background: `${col.main}12`, color: col.main }}>
                                                     {pts}pt
                                                 </motion.span>
+                                            )}
+                                            {canKick && (
+                                                <motion.button
+                                                    whileTap={{ scale: 0.85 }}
+                                                    style={{ touchAction: 'manipulation' }}
+                                                    onClick={() => kickPlayer(p.name)}
+                                                    className="w-8 h-8 flex items-center justify-center rounded-xl text-white/20 hover:text-brand-pink hover:bg-brand-pink/10 transition-colors shrink-0"
+                                                >
+                                                    <UserX className="w-3.5 h-3.5" />
+                                                </motion.button>
                                             )}
                                         </motion.div>
                                     );
@@ -1219,9 +1464,9 @@ export const Lobby = () => {
                         </div>
                     </NeonCard>
 
-                    {/* Right column: Settings + Start */}
+                    {/* Right column */}
                     <div className="md:col-span-5 flex flex-col gap-4">
-                        {isHost ? (
+                        {isActuallyHost ? (
                             <NeonCard>
                                 <div className="flex items-center gap-2.5 text-white/45 border-b border-white/[0.07] pb-4 mb-4">
                                     <Settings className="w-4 h-4" />
@@ -1240,6 +1485,9 @@ export const Lobby = () => {
                                             <option value="Technology & Science">💻 Teknoloji & Bilim</option>
                                             <option value="Everyday Objects">🪑 Günlük Eşyalar</option>
                                             <option value="History & Culture">🏛️ Tarih & Kültür</option>
+                                            <option value="Food & Cooking">🍕 Yemek & Mutfak</option>
+                                            <option value="Sports & Games">⚽ Spor & Oyunlar</option>
+                                            <option value="Space & Astronomy">🚀 Uzay & Astronomi</option>
                                         </select>
                                     </div>
                                     <div>
@@ -1264,7 +1512,7 @@ export const Lobby = () => {
                             </NeonCard>
                         )}
 
-                        {isHost ? (
+                        {isActuallyHost ? (
                             <Button size="xl"
                                 className="w-full flex items-center justify-center gap-3 group"
                                 style={{ boxShadow: '0 20px 50px rgba(0,240,255,0.3)' }}
@@ -1287,14 +1535,13 @@ export const Lobby = () => {
                         )}
                     </div>
 
-                    {/* Lobby chat — inline, bottom of grid */}
+                    {/* Lobby chat */}
                     <div className="md:col-span-12">
                         <NeonCard>
                             <div className="flex items-center gap-2.5 text-white/45 border-b border-white/[0.07] pb-4 mb-4">
                                 <MessageSquare className="w-4 h-4" />
                                 <h2 className="text-xs font-black uppercase tracking-widest">Sohbet</h2>
                             </div>
-
                             <div className="overflow-y-auto flex flex-col gap-2 mb-3 scroll-smooth-touch"
                                 style={{ maxHeight: '160px', minHeight: '60px' }}>
                                 {chatMessages.length === 0
@@ -1316,7 +1563,6 @@ export const Lobby = () => {
                                 }
                                 <div ref={chatEndRef} />
                             </div>
-
                             <div className="flex gap-2">
                                 <input
                                     className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white placeholder-white/20 outline-none focus:border-brand-cyan/40 transition-colors"
@@ -1374,6 +1620,8 @@ export const Lobby = () => {
                 popups={scorePopups}
                 onRemove={id => setScorePopups(p => p.filter(x => x.id !== id))}
             />
+            <FlyingEmojiOverlay />
+            <EmojiBar />
             <QrModal />
             <ChatPanel />
             {phase !== 'lobby' && <ChatButton />}
