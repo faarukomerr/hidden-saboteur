@@ -3,42 +3,52 @@ import { motion, HTMLMotionProps } from 'framer-motion';
 import { cn } from '../../lib/utils';
 import { Loader2 } from 'lucide-react';
 
-interface ButtonProps extends HTMLMotionProps<"button"> {
+interface ButtonProps extends Omit<HTMLMotionProps<'button'>, 'children'> {
     variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
     size?: 'sm' | 'md' | 'lg' | 'xl';
     isLoading?: boolean;
+    children?: React.ReactNode;
 }
 
+const vibrate = (ms: number) => { try { navigator.vibrate?.(ms); } catch (_) {} };
+
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-    ({ className, variant = 'primary', size = 'md', isLoading, children, ...props }, ref) => {
+    ({ className, variant = 'primary', size = 'md', isLoading, onClick, children, ...props }, ref) => {
 
         const variants = {
-            primary: "bg-gradient-to-br from-brand-cyan to-blue-500 text-brand-dark hover:from-cyan-300 hover:to-blue-400 shadow-[0_10px_30px_rgba(0,240,255,0.5),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-white/20",
-            secondary: "bg-black/20 text-white hover:bg-white/10 border-t-white/20 border-l-white/10 border-white/5 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)]",
-            danger: "bg-gradient-to-br from-brand-pink to-red-600 text-white hover:from-pink-500 hover:to-red-500 shadow-[0_10px_30px_rgba(255,0,85,0.5),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-white/20",
-            ghost: "bg-transparent text-white/70 hover:text-white hover:bg-white/10"
+            primary:   'bg-gradient-to-br from-brand-cyan to-blue-500 text-brand-dark hover:from-cyan-300 hover:to-blue-400 shadow-[0_10px_30px_rgba(0,240,255,0.5),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-white/20',
+            secondary: 'bg-black/20 text-white hover:bg-white/10 border-t-white/20 border-l-white/10 border-white/5 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5),inset_0_1px_1px_rgba(255,255,255,0.1)]',
+            danger:    'bg-gradient-to-br from-brand-pink to-red-600 text-white hover:from-pink-500 hover:to-red-500 shadow-[0_10px_30px_rgba(255,0,85,0.5),inset_0_1px_1px_rgba(255,255,255,0.4)] border border-white/20',
+            ghost:     'bg-transparent text-white/70 hover:text-white hover:bg-white/10',
         };
 
         const sizes = {
-            sm: "px-4 py-2 text-sm min-h-[40px]",
-            md: "px-6 py-3 text-base font-semibold min-h-[48px]",
-            lg: "px-8 py-4 text-lg font-bold uppercase tracking-wider min-h-[56px]",
-            xl: "px-8 sm:px-12 py-5 sm:py-6 text-xl sm:text-2xl font-black uppercase tracking-widest rounded-full min-h-[64px]"
+            sm: 'px-4 py-2 text-sm min-h-[44px]',
+            md: 'px-6 py-3 text-base font-semibold min-h-[48px]',
+            lg: 'px-8 py-4 text-lg font-bold uppercase tracking-wider min-h-[56px]',
+            xl: 'px-8 sm:px-12 py-5 sm:py-6 text-xl sm:text-2xl font-black uppercase tracking-widest rounded-full min-h-[64px]',
+        };
+
+        const handleClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+            if (!props.disabled && !isLoading) vibrate(8);
+            onClick?.(e);
         };
 
         return (
             <motion.button
                 ref={ref}
-                whileHover={{ scale: props.disabled ? 1 : 1.05, y: -2 }}
+                whileHover={{ scale: props.disabled ? 1 : 1.04, y: props.disabled ? 0 : -2 }}
                 whileTap={{ scale: props.disabled ? 1 : 0.95, y: 0 }}
-                transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 17 }}
+                style={{ touchAction: 'manipulation' }}
                 className={cn(
-                    "inline-flex items-center justify-center rounded-2xl transition-colors focus:outline-none focus:ring-2 focus:ring-brand-cyan/50 disabled:opacity-50 disabled:cursor-not-allowed",
+                    'inline-flex items-center justify-center rounded-2xl transition-colors focus:outline-none focus:ring-2 focus:ring-brand-cyan/50 disabled:opacity-50 disabled:cursor-not-allowed select-none',
                     variants[variant],
                     sizes[size],
                     className
                 )}
                 disabled={isLoading || props.disabled}
+                onClick={handleClick}
                 {...props}
             >
                 {isLoading && <Loader2 className="w-5 h-5 mr-2 animate-spin" />}
@@ -48,4 +58,4 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
     }
 );
 
-Button.displayName = "Button";
+Button.displayName = 'Button';

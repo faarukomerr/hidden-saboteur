@@ -23,13 +23,33 @@
         background-color: var(--background);
         color: var(--foreground);
         font-family: 'Inter', sans-serif;
-        min-height: 100vh; /* fallback */
-        min-height: 100dvh; /* mobile safari fix */
+        min-height: 100vh;
+        min-height: 100dvh;
         overflow-x: hidden;
         -webkit-tap-highlight-color: transparent;
-        padding-bottom: env(safe-area-inset-bottom);
-        padding-top: env(safe-area-inset-top);
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        text-size-adjust: 100%;
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior: none;
         position: relative;
+    }
+
+    /* Prevent double-tap zoom on all interactive elements */
+    button, a, [role="button"] {
+        touch-action: manipulation;
+    }
+
+    /* Prevent callout on long press */
+    img, button {
+        -webkit-touch-callout: none;
+        user-select: none;
+    }
+
+    /* Smooth momentum scrolling inside scroll containers */
+    .scroll-smooth-touch {
+        -webkit-overflow-scrolling: touch;
+        scroll-behavior: smooth;
     }
 
     body::before {

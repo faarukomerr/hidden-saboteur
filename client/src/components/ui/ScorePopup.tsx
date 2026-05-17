@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export interface ScorePopupItem {
@@ -12,7 +12,8 @@ interface Props {
 }
 
 export const ScorePopup = ({ popups, onRemove }: Props) => (
-    <div className="fixed top-1/3 right-4 z-[90] flex flex-col items-end gap-2 pointer-events-none">
+    <div className="fixed top-24 right-3 z-[90] flex flex-col items-end gap-2 pointer-events-none"
+        style={{ top: 'calc(5.5rem + env(safe-area-inset-top))' }}>
         <AnimatePresence>
             {popups.map(p => (
                 <PopupItem key={p.id} popup={p} onComplete={() => onRemove(p.id)} />
@@ -29,19 +30,24 @@ const PopupItem = ({ popup, onComplete }: { popup: ScorePopupItem; onComplete: (
 
     return (
         <motion.div
-            className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-brand-cyan/20 border border-brand-cyan/40 backdrop-blur-sm"
-            initial={{ x: 60, opacity: 0, scale: 0.6 }}
+            className="flex items-center gap-2 px-5 py-3 rounded-full backdrop-blur-sm"
+            style={{
+                background: 'rgba(0,240,255,0.15)',
+                border: '1px solid rgba(0,240,255,0.35)',
+                boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+            }}
+            initial={{ x: 70, opacity: 0, scale: 0.5 }}
             animate={{ x: 0, opacity: 1, scale: 1 }}
-            exit={{ x: 50, opacity: 0, y: -12, scale: 0.8 }}
-            transition={{ type: 'spring', bounce: 0.5 }}
+            exit={{ x: 55, opacity: 0, y: -14, scale: 0.75 }}
+            transition={{ type: 'spring', bounce: 0.5, duration: 0.5 }}
         >
             <span
-                className="font-black text-2xl text-brand-cyan tabular-nums"
-                style={{ textShadow: '0 0 14px rgba(0,240,255,0.9)' }}
+                className="font-black text-2xl text-brand-cyan tabular-nums leading-none"
+                style={{ textShadow: '0 0 16px rgba(0,240,255,0.95)' }}
             >
                 +{popup.points}
             </span>
-            <span className="text-white/40 text-[10px] font-black uppercase tracking-wider">puan</span>
+            <span className="text-white/40 text-[9px] font-black uppercase tracking-wider">pt</span>
         </motion.div>
     );
 };
