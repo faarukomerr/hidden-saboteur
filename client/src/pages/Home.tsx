@@ -1,17 +1,20 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
-import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'framer-motion';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { NeonCard } from '../components/ui/NeonCard';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { LanguageToggle } from '../components/ui/LanguageToggle';
 import { useSocket } from '../lib/SocketContext';
 import { useLanguage } from '../lib/i18n';
-import { Wifi, WifiOff, Swords, Users, ChevronRight } from 'lucide-react';
+import { Wifi, WifiOff, Swords, Users, ChevronRight, Lock, Unlock } from 'lucide-react';
 
 export const Home = () => {
+    const [searchParams] = useSearchParams();
     const [username, setUsername] = useState('');
-    const [roomCode, setRoomCode] = useState('');
+    const [roomCode, setRoomCode] = useState(searchParams.get('code') || '');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [isJoining, setIsJoining] = useState(false);
     const navigate = useNavigate();
     const { isConnected } = useSocket();
@@ -20,14 +23,16 @@ export const Home = () => {
     const handleCreateRoom = async () => {
         if (!username.trim()) return alert(t('enterUsernameAlert'));
         const fakeRoom = Math.random().toString(36).substring(2, 8).toUpperCase();
-        navigate(`/room/${fakeRoom}?user=${username}&host=true`);
+        const pwd = showPassword && password.trim() ? `&pwd=${encodeURIComponent(password.trim())}` : '';
+        navigate(`/room/${fakeRoom}?user=${encodeURIComponent(username)}&host=true${pwd}`);
     };
 
-    const handleJoinRoom = (e: React.FormEvent) => {
+    const handleJoinRoom = (e: React.SyntheticEvent) => {
         e.preventDefault();
         if (!username.trim() || !roomCode.trim()) return;
         setIsJoining(true);
-        navigate(`/room/${roomCode.toUpperCase()}?user=${username}`);
+        const pwd = password.trim() ? `&pwd=${encodeURIComponent(password.trim())}` : '';
+        navigate(`/room/${roomCode.toUpperCase()}?user=${encodeURIComponent(username)}${pwd}`);
     };
 
     return (
@@ -39,10 +44,7 @@ export const Home = () => {
                     initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }}
                     className={`flex items-center gap-2 px-4 py-2 rounded-full border ${isConnected ? 'bg-green-500/10 border-green-500/20 text-green-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}
                 >
-                    {isConnected
-                        ? <Wifi className="w-3 h-3" />
-                        : <WifiOff className="w-3 h-3" />
-                    }
+                    {isConnected ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                     <span className="text-[10px] font-black uppercase tracking-widest">
                         {isConnected ? t('serverOnline') : t('connecting')}
                     </span>
@@ -52,7 +54,7 @@ export const Home = () => {
                 </motion.div>
             </div>
 
-            {/* Hero Section */}
+            {/* Hero */}
             <motion.div
                 initial={{ y: -40, opacity: 0 }}
                 animate={{ y: 0, opacity: 1 }}
@@ -78,9 +80,7 @@ export const Home = () => {
                 </h1>
 
                 <motion.p
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.5 }}
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.5 }}
                     className="mt-5 text-white/40 tracking-widest font-medium text-xs md:text-sm uppercase"
                 >
                     {t('subtitle')}
@@ -95,7 +95,7 @@ export const Home = () => {
                 className="w-full max-w-sm"
             >
                 <NeonCard className="w-full">
-                    <div className="space-y-6">
+                    <div className="space-y-5">
                         <Input
                             label={t('yourAlias')}
                             placeholder={t('enterName')}
@@ -104,7 +104,43 @@ export const Home = () => {
                             maxLength={15}
                         />
 
-                        <div className="pt-2 space-y-3">
+                        {/* Lock Room toggle (create) */}
+                        <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-black uppercase tracking-widest text-white/30">
+                                Oda Şifresi (opsiyonel)
+                            </span>
+                            <motion.button
+                                whileTap={{ scale: 0.92 }}
+                                onClick={() => { setShowPassword(p => !p); setPassword(''); }}
+                                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest border transition-all ${showPassword
+                                    ? 'bg-brand-cyan/10 border-brand-cyan/30 text-brand-cyan'
+                                    : 'bg-white/5 border-white/10 text-white/30 hover:text-white/50'}`}
+                            >
+                                {showPassword ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+                                {showPassword ? 'Kilitli' : 'Kilitle'}
+                            </motion.button>
+                        </div>
+
+                        <AnimatePresence>
+                            {showPassword && (
+                                <motion.div
+                                    initial={{ height: 0, opacity: 0 }}
+                                    animate={{ height: 'auto', opacity: 1 }}
+                                    exit={{ height: 0, opacity: 0 }}
+                                    className="overflow-hidden"
+                                >
+                                    <Input
+                                        placeholder="Şifre gir..."
+                                        value={password}
+                                        onChange={e => setPassword(e.target.value)}
+                                        maxLength={20}
+                                        type="password"
+                                    />
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        <div className="pt-1 space-y-3">
                             <Button
                                 className="w-full flex items-center justify-center gap-3 group"
                                 size="lg"
@@ -130,6 +166,24 @@ export const Home = () => {
                                     maxLength={6}
                                     className="text-center font-mono text-xl uppercase tracking-[0.4em]"
                                 />
+                                <AnimatePresence>
+                                    {roomCode.length >= 3 && (
+                                        <motion.div
+                                            initial={{ height: 0, opacity: 0 }}
+                                            animate={{ height: 'auto', opacity: 1 }}
+                                            exit={{ height: 0, opacity: 0 }}
+                                            className="overflow-hidden"
+                                        >
+                                            <Input
+                                                placeholder="Oda şifresi (varsa)..."
+                                                value={password}
+                                                onChange={e => setPassword(e.target.value)}
+                                                maxLength={20}
+                                                type="password"
+                                            />
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
                                 <Button
                                     type="submit"
                                     variant="secondary"

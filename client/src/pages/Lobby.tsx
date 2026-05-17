@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useParams, useSearchParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { QRCodeSVG } from 'qrcode.react';
 import { useSocket } from '../lib/SocketContext';
 import { NeonCard } from '../components/ui/NeonCard';
 import { Button } from '../components/ui/Button';
@@ -18,12 +19,14 @@ import { playSound } from '../lib/utils';
 import {
     Trophy, Settings, Users, Gamepad2, ArrowLeft, RotateCcw,
     Home, Clock, AlertCircle, Cog, Star, Zap,
+    MessageSquare, QrCode, X, Send,
 } from 'lucide-react';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface Player { id: string; name: string; score: number; }
 interface ScoreEntry { name: string; socketId: string; points: number; }
 interface ScorePopupItem { id: string; points: number; }
+interface ChatMsg { name: string; message: string; timestamp: number; }
 type GamePhase = 'lobby' | 'sabotage_input' | 'narration' | 'round_summary' | 'game_over' | 'grand_winner';
 
 // ─── Per-player color palette ─────────────────────────────────────────────────
@@ -52,6 +55,7 @@ export const Lobby = () => {
     const { socket, isConnected } = useSocket();
     const username = searchParams.get('user');
     const isHost = searchParams.get('host') === 'true';
+    const password = searchParams.get('pwd') || undefined;
     const { t, language } = useLanguage();
 
     // Game state
@@ -82,6 +86,16 @@ export const Lobby = () => {
     const [displayScore, setDisplayScore] = useState(0);
     const prevScoresRef = useRef<ScoreEntry[]>([]);
 
+    // Chat state
+    const [chatMessages, setChatMessages] = useState<ChatMsg[]>([]);
+    const [chatInput, setChatInput] = useState('');
+    const [isChatOpen, setIsChatOpen] = useState(false);
+    const [unreadCount, setUnreadCount] = useState(0);
+    const chatEndRef = useRef<HTMLDivElement>(null);
+
+    // QR state
+    const [isQrOpen, setIsQrOpen] = useState(false);
+
     // ─── Grand winner score counter ───────────────────────────────────────────
     useEffect(() => {
         if (phase !== 'grand_winner' || !grandWinnerData) return;
@@ -98,6 +112,11 @@ export const Lobby = () => {
         return () => clearInterval(id);
     }, [phase, grandWinnerData]);
 
+    // ─── Chat scroll ──────────────────────────────────────────────────────────
+    useEffect(() => {
+        if (isChatOpen) chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [chatMessages, isChatOpen]);
+
     // ─── Round reset ──────────────────────────────────────────────────────────
     const resetRoundState = () => {
         setMyRole(null); setTargetWord(null); setRoundId('');
@@ -110,7 +129,7 @@ export const Lobby = () => {
     // ─── Socket handlers ──────────────────────────────────────────────────────
     useEffect(() => {
         if (!socket || !roomCode || !username) { navigate('/'); return; }
-        if (isConnected) socket.emit('join_room', { roomCode, username });
+        if (isConnected) socket.emit('join_room', { roomCode, username, password });
 
         socket.on('room_state_update', (d: { players: Player[] }) => setPlayers(d.players || []));
 
@@ -135,7 +154,7 @@ export const Lobby = () => {
         socket.on('scores_update', (d: { scores: ScoreEntry[] }) => {
             const prev = prevScoresRef.current;
             d.scores.forEach(ns => {
-                const ps = prev.find(s => s.socketId === ns.socketId);
+                const ps = prev.find(s => s.name === ns.name);
                 const diff = ns.points - (ps?.points ?? 0);
                 if (diff > 0 && ns.name === username) {
                     setScorePopups(p => [...p, { id: `${Date.now()}-${Math.random()}`, points: diff }]);
@@ -159,9 +178,7 @@ export const Lobby = () => {
             setPhase('grand_winner');
         });
 
-        socket.on('sabotage_failed', () => {
-            showToast('wrong', '❌ Bu yasaklı kelimelerden biri değildi!', 3000);
-        });
+        socket.on('sabotage_failed', () => showToast('wrong', '❌ Bu yasaklı kelimelerden biri değildi!', 3000));
 
         socket.on('host_commentary', (d: { message: string }) => {
             setCommentary(d.message);
@@ -185,14 +202,25 @@ export const Lobby = () => {
         socket.on('game_over', () => { setPhase('game_over'); setTimeLeft(0); setEndTime(null); });
         socket.on('force_reset', () => resetRoundState());
 
+        socket.on('chat_message', (msg: ChatMsg) => {
+            setChatMessages(p => [...p, msg]);
+            setUnreadCount(c => c + 1);
+        });
+        socket.on('chat_history', (d: { messages: ChatMsg[] }) => {
+            setChatMessages(d.messages);
+        });
+
         return () => {
             ['room_state_update', 'role_assigned', 'phase_changed', 'saboteur_words_list',
              'sabotage_words_saved', 'timer_start', 'scores_update', 'sabotage_confirmed',
              'sabotage_failed', 'host_commentary', 'guess_result', 'round_summary',
-             'game_over', 'force_reset', 'grand_winner',
+             'game_over', 'force_reset', 'grand_winner', 'chat_message', 'chat_history',
             ].forEach(e => socket.off(e));
         };
-    }, [socket, isConnected, roomCode, username, navigate]);
+    }, [socket, isConnected, roomCode, username, navigate, password]);
+
+    // Reset unread when chat is opened
+    useEffect(() => { if (isChatOpen) setUnreadCount(0); }, [isChatOpen]);
 
     // ─── Timer tick ───────────────────────────────────────────────────────────
     useEffect(() => {
@@ -211,7 +239,16 @@ export const Lobby = () => {
         setToast({ type, msg }); setTimeout(() => setToast(null), ms);
     };
 
-    // ─── Shared sub-components ────────────────────────────────────────────────
+    const sendChat = () => {
+        if (!chatInput.trim()) return;
+        socket?.emit('send_chat', { roomCode, message: chatInput.trim() });
+        setChatInput('');
+    };
+
+    // ─── Share URL for QR ─────────────────────────────────────────────────────
+    const shareUrl = `${window.location.origin}/?code=${roomCode}`;
+
+    // ─── Sub-components ───────────────────────────────────────────────────────
 
     const FloatingTimer = () => {
         if (!endTime || timeLeft <= 0) return null;
@@ -303,6 +340,153 @@ export const Lobby = () => {
         </div>
     );
 
+    // ─── Chat Panel ───────────────────────────────────────────────────────────
+    const ChatPanel = () => (
+        <AnimatePresence>
+            {isChatOpen && (
+                <motion.div
+                    initial={{ opacity: 0, y: 20, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 20, scale: 0.96 }}
+                    transition={{ type: 'spring', bounce: 0.2, duration: 0.35 }}
+                    className="fixed bottom-[max(5rem,calc(4rem+env(safe-area-inset-bottom)))] right-3 z-[55] w-72 sm:w-80 bg-black/90 backdrop-blur-2xl border border-white/10 rounded-3xl shadow-2xl flex flex-col overflow-hidden"
+                    style={{ maxHeight: '55vh' }}
+                >
+                    {/* Header */}
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.07]">
+                        <div className="flex items-center gap-2">
+                            <MessageSquare className="w-3.5 h-3.5 text-brand-cyan" />
+                            <span className="text-[10px] font-black uppercase tracking-widest text-white/60">Sohbet</span>
+                        </div>
+                        <button onClick={() => setIsChatOpen(false)} className="text-white/30 hover:text-white/70 transition-colors">
+                            <X className="w-4 h-4" />
+                        </button>
+                    </div>
+
+                    {/* Messages */}
+                    <div className="flex-1 overflow-y-auto p-3 space-y-2 overscroll-contain">
+                        {chatMessages.length === 0 ? (
+                            <p className="text-white/20 text-[10px] text-center py-4 uppercase tracking-widest">Henüz mesaj yok</p>
+                        ) : chatMessages.map((msg, i) => (
+                            <div key={i} className={`flex flex-col ${msg.name === username ? 'items-end' : 'items-start'}`}>
+                                {(i === 0 || chatMessages[i - 1].name !== msg.name) && (
+                                    <span className="text-[9px] font-bold mb-0.5 px-1"
+                                        style={{ color: playerColor(msg.name).main }}>
+                                        {msg.name === username ? 'Sen' : msg.name}
+                                    </span>
+                                )}
+                                <div className={`px-3 py-2 rounded-2xl text-sm max-w-[85%] break-words leading-snug ${
+                                    msg.name === username
+                                        ? 'bg-brand-cyan/15 text-white rounded-tr-sm'
+                                        : 'bg-white/[0.07] text-white/80 rounded-tl-sm'
+                                }`}>
+                                    {msg.message}
+                                </div>
+                            </div>
+                        ))}
+                        <div ref={chatEndRef} />
+                    </div>
+
+                    {/* Input */}
+                    <div className="p-3 border-t border-white/[0.07] flex gap-2">
+                        <input
+                            className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-sm text-white placeholder-white/20 outline-none focus:border-brand-cyan/40 transition-colors"
+                            placeholder="Mesaj yaz..."
+                            value={chatInput}
+                            onChange={e => setChatInput(e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+                            maxLength={200}
+                        />
+                        <motion.button
+                            whileTap={{ scale: 0.88 }}
+                            onClick={sendChat}
+                            disabled={!chatInput.trim()}
+                            className="bg-brand-cyan/15 hover:bg-brand-cyan/25 disabled:opacity-30 text-brand-cyan px-3 py-2 rounded-xl transition-colors"
+                        >
+                            <Send className="w-4 h-4" />
+                        </motion.button>
+                    </div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+    );
+
+    // ─── Floating chat button (game phases) ──────────────────────────────────
+    const ChatButton = () => (
+        <motion.button
+            whileHover={{ scale: 1.08 }} whileTap={{ scale: 0.92 }}
+            onClick={() => setIsChatOpen(p => !p)}
+            className="fixed bottom-[max(5rem,calc(4rem+env(safe-area-inset-bottom)))] left-3 z-[55] bg-black/80 backdrop-blur-xl border border-white/10 rounded-full p-3 shadow-xl"
+        >
+            <div className="relative">
+                <MessageSquare className="w-5 h-5 text-white/50" />
+                {unreadCount > 0 && !isChatOpen && (
+                    <motion.span
+                        initial={{ scale: 0 }} animate={{ scale: 1 }}
+                        className="absolute -top-1.5 -right-1.5 bg-brand-pink text-white text-[9px] font-black w-4 h-4 rounded-full flex items-center justify-center"
+                    >
+                        {unreadCount > 9 ? '9+' : unreadCount}
+                    </motion.span>
+                )}
+            </div>
+        </motion.button>
+    );
+
+    // ─── QR Modal ────────────────────────────────────────────────────────────
+    const QrModal = () => (
+        <AnimatePresence>
+            {isQrOpen && (
+                <motion.div
+                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    className="fixed inset-0 z-[80] bg-black/70 backdrop-blur-md flex items-center justify-center p-6"
+                    onClick={() => setIsQrOpen(false)}
+                >
+                    <motion.div
+                        initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.85, opacity: 0 }}
+                        transition={{ type: 'spring', bounce: 0.3 }}
+                        onClick={e => e.stopPropagation()}
+                        className="bg-[#120A17] border border-white/10 rounded-3xl p-6 flex flex-col items-center gap-4 max-w-xs w-full shadow-2xl"
+                    >
+                        <div className="flex items-center justify-between w-full">
+                            <span className="text-[10px] font-black uppercase tracking-widest text-white/40">Odaya Davet</span>
+                            <button onClick={() => setIsQrOpen(false)} className="text-white/30 hover:text-white/60 transition-colors">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+
+                        {/* QR Code */}
+                        <div className="p-3 bg-white rounded-2xl">
+                            <QRCodeSVG
+                                value={shareUrl}
+                                size={180}
+                                bgColor="#ffffff"
+                                fgColor="#120A17"
+                                level="M"
+                            />
+                        </div>
+
+                        <div className="text-center w-full">
+                            <p className="text-brand-cyan font-black text-2xl tracking-widest mb-1">{roomCode}</p>
+                            <p className="text-white/30 text-[10px] uppercase tracking-widest">Oda Kodu</p>
+                        </div>
+
+                        <motion.button
+                            whileTap={{ scale: 0.95 }}
+                            onClick={() => {
+                                navigator.clipboard.writeText(shareUrl);
+                                showToast('correct', '📋 Link kopyalandı!', 2000);
+                            }}
+                            className="w-full py-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/50 hover:text-white text-[10px] font-black uppercase tracking-widest transition-all"
+                        >
+                            Linki Kopyala
+                        </motion.button>
+                    </motion.div>
+                </motion.div>
+            )}
+        </AnimatePresence>
+    );
+
     // ─── Phase views ──────────────────────────────────────────────────────────
 
     const renderContent = () => {
@@ -310,14 +494,11 @@ export const Lobby = () => {
         // ── GRAND WINNER ─────────────────────────────────────────────────────
         if (phase === 'grand_winner' && grandWinnerData) {
             const stars = Array.from({ length: 14 }, (_, i) => ({
-                left: `${(i * 43 + 7) % 92}%`,
-                top: `${(i * 61 + 9) % 85}%`,
-                delay: i * 0.18,
-                dur: 1.4 + (i % 4) * 0.4,
+                left: `${(i * 43 + 7) % 92}%`, top: `${(i * 61 + 9) % 85}%`,
+                delay: i * 0.18, dur: 1.4 + (i % 4) * 0.4,
             }));
             return (
                 <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-6 relative overflow-hidden">
-                    {/* Stars */}
                     {stars.map((s, i) => (
                         <motion.div key={i} className="absolute pointer-events-none"
                             style={{ left: s.left, top: s.top }}
@@ -326,8 +507,6 @@ export const Lobby = () => {
                             <Star className="w-3.5 h-3.5 text-brand-cyan/30" fill="currentColor" />
                         </motion.div>
                     ))}
-
-                    {/* Glow */}
                     <div className="absolute inset-0 pointer-events-none"
                         style={{ background: 'radial-gradient(ellipse at center, rgba(0,240,255,0.07) 0%, transparent 68%)' }} />
 
@@ -336,12 +515,8 @@ export const Lobby = () => {
                         transition={{ type: 'spring', bounce: 0.4 }}
                         className="max-w-sm w-full flex flex-col items-center relative z-10"
                     >
-                        {/* Trophy */}
-                        <motion.div
-                            initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-                            transition={{ delay: 0.2, type: 'spring', bounce: 0.55 }}
-                            className="mb-5"
-                        >
+                        <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+                            transition={{ delay: 0.2, type: 'spring', bounce: 0.55 }} className="mb-5">
                             <motion.div animate={{ rotate: [0, -6, 6, -3, 0] }} transition={{ duration: 0.7, delay: 0.6 }}>
                                 <Trophy className="w-20 h-20 md:w-28 md:h-28 text-brand-cyan"
                                     style={{ filter: 'drop-shadow(0 0 35px rgba(0,240,255,0.75))' }} />
@@ -351,18 +526,14 @@ export const Lobby = () => {
                         <TextReveal text="ŞAMPİYON"
                             className="text-[clamp(2.2rem,8vw,4rem)] font-black text-transparent bg-clip-text bg-gradient-to-r from-brand-cyan to-brand-pink mb-3 uppercase tracking-tighter" />
 
-                        <motion.h2
-                            initial={{ opacity: 0, scale: 0.75 }} animate={{ opacity: 1, scale: 1 }}
+                        <motion.h2 initial={{ opacity: 0, scale: 0.75 }} animate={{ opacity: 1, scale: 1 }}
                             transition={{ delay: 0.65, type: 'spring', bounce: 0.3 }}
-                            className="text-3xl md:text-4xl text-white font-bold mb-8 tracking-wide"
-                        >
+                            className="text-3xl md:text-4xl text-white font-bold mb-8 tracking-wide">
                             {grandWinnerData.winnerName}
                         </motion.h2>
 
-                        <motion.div
-                            initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
-                            transition={{ delay: 0.85 }} className="mb-8 w-full"
-                        >
+                        <motion.div initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.85 }} className="mb-8 w-full">
                             <NeonCard variant="secondary">
                                 <p className="text-white/25 uppercase tracking-widest text-[9px] font-black mb-2">Final Skor</p>
                                 <p className="text-[clamp(3rem,11vw,5rem)] font-black font-mono text-brand-cyan tabular-nums"
@@ -392,8 +563,7 @@ export const Lobby = () => {
                 <div className="flex flex-col items-center justify-center min-h-[100dvh] text-center p-4 sm:p-6 pb-[max(7rem,calc(6rem+env(safe-area-inset-bottom)))]">
                     <motion.div initial={{ scale: 0.85, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                         transition={{ type: 'spring', bounce: 0.4 }}
-                        className="flex flex-col items-center w-full max-w-sm"
-                    >
+                        className="flex flex-col items-center w-full max-w-sm">
                         <motion.div className="mb-6"
                             animate={!isTimeout ? { rotate: [0, -10, 10, -5, 0] } : {}}
                             transition={{ delay: 0.3, duration: 0.5 }}>
@@ -479,7 +649,6 @@ export const Lobby = () => {
                     <motion.div initial={{ scale: 0.55, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                         transition={{ type: 'spring', bounce: 0.45 }}
                         className="flex flex-col items-center max-w-sm w-full relative z-10">
-
                         <motion.div className="text-[80px] md:text-[100px] leading-none mb-3 select-none"
                             animate={{ scale: [1, 1.06, 1], rotate: [0, 3, -3, 0] }}
                             transition={{ duration: 1.8, repeat: Infinity }}>
@@ -543,7 +712,6 @@ export const Lobby = () => {
                 );
             }
 
-            // Narrator / guesser waiting screen
             const isNarrator = myRole === 'narrator';
             const badgeColor = isNarrator ? '#00F0FF' : '#8B5CF6';
             const badgeBg = isNarrator ? 'rgba(0,240,255,0.08)' : 'rgba(139,92,246,0.08)';
@@ -553,7 +721,6 @@ export const Lobby = () => {
                 <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                     <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                         className="flex flex-col items-center">
-                        {/* Animated gears */}
                         <div className="relative w-32 h-32 mb-8">
                             <motion.div animate={{ rotate: 360 }} transition={{ duration: 11, repeat: Infinity, ease: 'linear' }}
                                 style={{ filter: 'drop-shadow(0 0 14px rgba(0,240,255,0.35))' }}>
@@ -596,7 +763,6 @@ export const Lobby = () => {
         // ── NARRATION ─────────────────────────────────────────────────────────
         if (phase === 'narration') {
 
-            // Narrator — timer select
             if (myRole === 'narrator' && !endTime) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-[100dvh] p-4 sm:p-6 text-center pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
@@ -641,7 +807,6 @@ export const Lobby = () => {
                 );
             }
 
-            // Narrator — timer running
             if (myRole === 'narrator') {
                 return (
                     <>
@@ -652,25 +817,20 @@ export const Lobby = () => {
                             pb-[max(6rem,calc(5rem+env(safe-area-inset-bottom)))]">
                             <motion.div initial={{ scale: 0.88, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
                                 className="w-full max-w-sm">
-                                <motion.p
-                                    className="text-[10px] text-brand-cyan font-black uppercase tracking-[0.35em] mb-6"
-                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
-                                >
+                                <motion.p className="text-[10px] text-brand-cyan font-black uppercase tracking-[0.35em] mb-6"
+                                    initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
                                     📢 Sen Anlatıcısın
                                 </motion.p>
-
                                 <NeonCard className="py-8 px-6 mb-6">
                                     <p className="text-[9px] font-bold text-white/25 uppercase tracking-widest mb-4">🎯 Hedef Kelime</p>
                                     <h1 className="text-[clamp(2.5rem,10vw,5rem)] font-black tracking-tight text-transparent bg-clip-text bg-gradient-to-br from-white to-white/50">
                                         {targetWord}
                                     </h1>
                                 </NeonCard>
-
                                 <motion.div
                                     className="flex items-start gap-3 bg-brand-pink/10 border border-dashed border-brand-pink/25 rounded-2xl p-4 text-left"
                                     animate={{ borderColor: ['rgba(255,0,85,0.25)', 'rgba(255,0,85,0.55)', 'rgba(255,0,85,0.25)'] }}
-                                    transition={{ duration: 2.5, repeat: Infinity }}
-                                >
+                                    transition={{ duration: 2.5, repeat: Infinity }}>
                                     <span className="text-brand-pink text-lg flex-shrink-0">⚠️</span>
                                     <div>
                                         <p className="text-brand-pink font-bold text-[10px] uppercase tracking-widest mb-1">Uyarı</p>
@@ -685,7 +845,6 @@ export const Lobby = () => {
                 );
             }
 
-            // Saboteur — word buttons
             if (myRole === 'saboteur') {
                 return (
                     <>
@@ -761,7 +920,6 @@ export const Lobby = () => {
 
                             <p className="text-white/30 text-sm mb-7">Anlatıcıyı dinle ve hedef kelimeyi tahmin et!</p>
 
-                            {/* Lives */}
                             <div className="flex items-center justify-center gap-3 mb-8">
                                 {[1, 2, 3].map(i => (
                                     <motion.div key={i}
@@ -826,89 +984,151 @@ export const Lobby = () => {
                     <LanguageToggle />
                 </div>
 
-                {/* Room code */}
+                {/* Room code + QR button */}
                 <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }}
                     className="text-center mb-6 w-full">
                     <p className="text-white/20 uppercase tracking-[0.5em] font-bold text-[9px] mb-2">Oda Kodu</p>
-                    <motion.h1
-                        whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
-                        onClick={() => {
-                            navigator.clipboard.writeText(roomCode || '');
-                            showToast('correct', '📋 Oda Kodu Kopyalandı!', 2000);
-                        }}
-                        className="text-[clamp(3rem,12vw,6.5rem)] font-black font-mono tracking-widest text-transparent bg-clip-text bg-gradient-to-br from-brand-cyan via-blue-400 to-purple-500 cursor-pointer hover:opacity-75 transition-opacity break-all px-2"
-                        title="Kopyalamak için tıkla"
-                    >
-                        {roomCode}
-                    </motion.h1>
+                    <div className="flex items-center justify-center gap-3">
+                        <motion.h1
+                            whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }}
+                            onClick={() => {
+                                navigator.clipboard.writeText(roomCode || '');
+                                showToast('correct', '📋 Oda Kodu Kopyalandı!', 2000);
+                            }}
+                            className="text-[clamp(2.8rem,10vw,5.5rem)] font-black font-mono tracking-widest text-transparent bg-clip-text bg-gradient-to-br from-brand-cyan via-blue-400 to-purple-500 cursor-pointer hover:opacity-75 transition-opacity"
+                            title="Kopyalamak için tıkla"
+                        >
+                            {roomCode}
+                        </motion.h1>
+                        <motion.button
+                            whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                            onClick={() => setIsQrOpen(true)}
+                            className="bg-white/5 hover:bg-brand-cyan/10 border border-white/10 hover:border-brand-cyan/30 rounded-2xl p-3 transition-all"
+                            title="QR kod ile paylaş"
+                        >
+                            <QrCode className="w-5 h-5 text-white/40 hover:text-brand-cyan transition-colors" />
+                        </motion.button>
+                    </div>
                     <motion.p className="text-white/15 text-[9px] uppercase tracking-widest mt-1 font-bold"
                         animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: 2.5, repeat: Infinity }}>
-                        Tıkla &amp; Kopyala
+                        Tıkla &amp; Kopyala · QR ile paylaş
                     </motion.p>
                 </motion.div>
 
                 <div className="w-full max-w-5xl grid gap-4 md:gap-6 grid-cols-1 md:grid-cols-12 mt-4">
                     {/* Players */}
-                    <NeonCard className="md:col-span-7 flex flex-col h-full">
-                        <div className="flex items-center justify-between mb-5 border-b border-white/[0.07] pb-4">
-                            <div className="flex items-center gap-2.5 text-white/50">
-                                <Users className="w-4 h-4" />
-                                <h2 className="text-xs font-black uppercase tracking-widest">Oyuncular</h2>
-                            </div>
-                            <span className="bg-brand-cyan/10 text-brand-cyan px-3 py-1 rounded-full text-[10px] font-black tracking-widest">
-                                {players.length}/8
-                            </span>
-                        </div>
-
-                        <motion.div className="space-y-2.5"
-                            variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.07 } } }}
-                            initial="hidden" animate="show">
-                            <AnimatePresence>
-                                {players.map(p => {
-                                    const col = playerColor(p.name);
-                                    const pts = scores.find(s => s.name === p.name)?.points ?? 0;
-                                    const initials = p.name.slice(0, 2).toUpperCase();
-                                    return (
-                                        <motion.div key={p.name}
-                                            variants={{ hidden: { opacity: 0, y: 14, scale: 0.94 }, show: { opacity: 1, y: 0, scale: 1 } }}
-                                            exit={{ opacity: 0, scale: 0.9, x: -20, transition: { duration: 0.2 } }}
-                                            className="flex items-center gap-3 rounded-2xl px-4 py-3.5 transition-all hover:scale-[1.015]"
-                                            style={{ background: col.bg, border: `1px solid ${col.border}` }}>
-                                            {/* Avatar */}
-                                            <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm shrink-0"
-                                                style={{ background: `${col.main}18`, color: col.main, border: `1px solid ${col.main}28` }}>
-                                                {initials}
-                                            </div>
-                                            <span className="font-bold text-sm flex-1 tracking-wide">
-                                                {p.name}
-                                                {p.name === username && (
-                                                    <span className="text-[9px] ml-2 px-2 py-0.5 rounded-md uppercase tracking-widest font-black"
-                                                        style={{ background: `${col.main}14`, color: col.main }}>
-                                                        sen
-                                                    </span>
-                                                )}
-                                            </span>
-                                            {pts > 0 && (
-                                                <motion.span
-                                                    key={pts}
-                                                    initial={{ scale: 1.3 }} animate={{ scale: 1 }}
-                                                    className="font-mono font-black text-sm px-2.5 py-1 rounded-lg shrink-0"
-                                                    style={{ background: `${col.main}12`, color: col.main }}>
-                                                    {pts} pt
-                                                </motion.span>
-                                            )}
-                                        </motion.div>
-                                    );
-                                })}
-                            </AnimatePresence>
-                            {players.length === 0 && (
-                                <div className="flex flex-col items-center justify-center py-10 opacity-25">
-                                    <Users className="w-10 h-10 mb-3" />
-                                    <p className="text-sm italic">Oyuncular bekleniyor...</p>
+                    <div className="md:col-span-7 flex flex-col gap-4">
+                        <NeonCard className="flex flex-col h-full">
+                            <div className="flex items-center justify-between mb-5 border-b border-white/[0.07] pb-4">
+                                <div className="flex items-center gap-2.5 text-white/50">
+                                    <Users className="w-4 h-4" />
+                                    <h2 className="text-xs font-black uppercase tracking-widest">Oyuncular</h2>
                                 </div>
-                            )}
-                        </motion.div>
-                    </NeonCard>
+                                <span className="bg-brand-cyan/10 text-brand-cyan px-3 py-1 rounded-full text-[10px] font-black tracking-widest">
+                                    {players.length}/8
+                                </span>
+                            </div>
+
+                            <motion.div className="space-y-2.5"
+                                variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.07 } } }}
+                                initial="hidden" animate="show">
+                                <AnimatePresence>
+                                    {players.map(p => {
+                                        const col = playerColor(p.name);
+                                        const pts = scores.find(s => s.name === p.name)?.points ?? 0;
+                                        const initials = p.name.slice(0, 2).toUpperCase();
+                                        return (
+                                            <motion.div key={p.name}
+                                                variants={{ hidden: { opacity: 0, y: 14, scale: 0.94 }, show: { opacity: 1, y: 0, scale: 1 } }}
+                                                exit={{ opacity: 0, scale: 0.9, x: -20, transition: { duration: 0.2 } }}
+                                                className="flex items-center gap-3 rounded-2xl px-4 py-3.5 transition-all hover:scale-[1.015]"
+                                                style={{ background: col.bg, border: `1px solid ${col.border}` }}>
+                                                <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm shrink-0"
+                                                    style={{ background: `${col.main}18`, color: col.main, border: `1px solid ${col.main}28` }}>
+                                                    {initials}
+                                                </div>
+                                                <span className="font-bold text-sm flex-1 tracking-wide">
+                                                    {p.name}
+                                                    {p.name === username && (
+                                                        <span className="text-[9px] ml-2 px-2 py-0.5 rounded-md uppercase tracking-widest font-black"
+                                                            style={{ background: `${col.main}14`, color: col.main }}>
+                                                            sen
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                {pts > 0 && (
+                                                    <motion.span key={pts}
+                                                        initial={{ scale: 1.3 }} animate={{ scale: 1 }}
+                                                        className="font-mono font-black text-sm px-2.5 py-1 rounded-lg shrink-0"
+                                                        style={{ background: `${col.main}12`, color: col.main }}>
+                                                        {pts} pt
+                                                    </motion.span>
+                                                )}
+                                            </motion.div>
+                                        );
+                                    })}
+                                </AnimatePresence>
+                                {players.length === 0 && (
+                                    <div className="flex flex-col items-center justify-center py-10 opacity-25">
+                                        <Users className="w-10 h-10 mb-3" />
+                                        <p className="text-sm italic">Oyuncular bekleniyor...</p>
+                                    </div>
+                                )}
+                            </motion.div>
+                        </NeonCard>
+
+                        {/* Lobby Chat */}
+                        <NeonCard className="flex flex-col">
+                            <div className="flex items-center gap-2.5 text-white/50 border-b border-white/[0.07] pb-4 mb-4">
+                                <MessageSquare className="w-4 h-4" />
+                                <h2 className="text-xs font-black uppercase tracking-widest">Sohbet</h2>
+                            </div>
+
+                            <div className="flex flex-col gap-2 overflow-y-auto mb-3" style={{ maxHeight: '180px', minHeight: '80px' }}>
+                                {chatMessages.length === 0 ? (
+                                    <p className="text-white/15 text-[10px] text-center py-4 uppercase tracking-widest">
+                                        Oyun başlamadan önce konuşun...
+                                    </p>
+                                ) : chatMessages.map((msg, i) => (
+                                    <div key={i} className={`flex flex-col ${msg.name === username ? 'items-end' : 'items-start'}`}>
+                                        {(i === 0 || chatMessages[i - 1].name !== msg.name) && (
+                                            <span className="text-[9px] font-bold mb-0.5 px-1"
+                                                style={{ color: playerColor(msg.name).main }}>
+                                                {msg.name === username ? 'Sen' : msg.name}
+                                            </span>
+                                        )}
+                                        <div className={`px-3 py-1.5 rounded-2xl text-sm max-w-[85%] break-words leading-snug ${
+                                            msg.name === username
+                                                ? 'bg-brand-cyan/15 text-white rounded-tr-sm'
+                                                : 'bg-white/[0.07] text-white/80 rounded-tl-sm'
+                                        }`}>
+                                            {msg.message}
+                                        </div>
+                                    </div>
+                                ))}
+                                <div ref={chatEndRef} />
+                            </div>
+
+                            <div className="flex gap-2">
+                                <input
+                                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/20 outline-none focus:border-brand-cyan/40 transition-colors"
+                                    placeholder="Mesaj yaz..."
+                                    value={chatInput}
+                                    onChange={e => setChatInput(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+                                    maxLength={200}
+                                />
+                                <motion.button
+                                    whileTap={{ scale: 0.88 }}
+                                    onClick={sendChat}
+                                    disabled={!chatInput.trim()}
+                                    className="bg-brand-cyan/10 hover:bg-brand-cyan/20 disabled:opacity-30 text-brand-cyan px-4 py-2.5 rounded-xl transition-colors border border-brand-cyan/20"
+                                >
+                                    <Send className="w-4 h-4" />
+                                </motion.button>
+                            </div>
+                        </NeonCard>
+                    </div>
 
                     {/* Settings / Rules + Start */}
                     <div className="md:col-span-5 flex flex-col gap-4 md:gap-6">
@@ -1006,6 +1226,10 @@ export const Lobby = () => {
                 popups={scorePopups}
                 onRemove={id => setScorePopups(p => p.filter(x => x.id !== id))}
             />
+            <QrModal />
+            {/* Floating chat button — only during game phases */}
+            {phase !== 'lobby' && <ChatButton />}
+            <ChatPanel />
             {renderContent()}
         </>
     );
