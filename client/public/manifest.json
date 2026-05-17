@@ -1,0 +1,24 @@
+{
+  "name": "Hidden Saboteur",
+  "short_name": "Saboteur",
+  "description": "Real-time AI-powered party game. Trust no one. Guess the word.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#120A17",
+  "theme_color": "#120A17",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
