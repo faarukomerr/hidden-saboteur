@@ -84,10 +84,6 @@
         100% { transform: scale(1.05) translate(10px, -10px); }
     }
 
-    /* Hide default cursor on desktop only when custom cursor is active */
-    @media (hover: hover) {
-        * { cursor: none !important; }
-    }
 
     /* Mono font for codes and scores */
     .font-mono {

@@ -7,8 +7,6 @@ import { Lobby } from './pages/Lobby';
 import { MaintenancePage } from './pages/MaintenancePage';
 import { MAINTENANCE_MODE } from './config/maintenance';
 
-import { CustomCursor } from './components/ui/CustomCursor';
-
 function App() {
     if (MAINTENANCE_MODE) {
         return <MaintenancePage />;
@@ -18,7 +16,6 @@ function App() {
         <LanguageProvider>
             <SocketProvider>
                 <BrowserRouter>
-                    <CustomCursor />
                     <Routes>
                         <Route path="/" element={<Home />} />
                         <Route path="/room/:id" element={<Lobby />} />
